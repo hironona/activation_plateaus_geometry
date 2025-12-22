@@ -1,4 +1,6 @@
-# Activation Plateau Mechanisms
+# Activation Plateau Geometry
+
+> **This project is based on the original repository by [MShinkle](https://github.com/MShinkle): https://github.com/MShinkle/activation_plateau_mechanisms.git**
 
 This is a set of streamlined experiments described in the post *[todo](link-to-post)*. This includes scripts for interpolation-based elicitation of activation plateaus and additional analyses of model layers, components, splines, and jacobians.
 
