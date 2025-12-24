@@ -10,6 +10,7 @@ import os
 import yaml
 from transformer_lens import HookedTransformer
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from transformers import ViTImageProcessor, ViTForImageClassification
 from typing import List, Dict, Union
 
 # Dictionary of no-LayerNorm models with standardized names
@@ -91,12 +92,27 @@ def load_gpt2_no_ln(model_name):
     
     return model, tokenizer, device, model_name
 
+def load_vit_regular(model_name):
+    """Load regular ViT with LayerNorm."""
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    actual_model_name = model_name
+    model = ViTForImageClassification.from_pretrained(actual_model_name, fold_ln=False, center_unembed=False).to(device)
+    processor = ViTImageProcessor.from_pretrained(actual_model_name)
+
+    return model, processor, device, model_name
+
 def load_model(model_name):
     """Load either regular, no-LayerNorm GPT-2, or OPT model."""
     if 'LNFree' in model_name:
         model, tokenizer, device, actual_name = load_gpt2_no_ln(model_name)
-    else:
+    elif "gpt2" in model_name:
         model, tokenizer, device, actual_name = load_gpt2_regular(model_name)
+    elif "vit" in model_name:
+        model, processor, device, actual_name = load_vit_regular(model_name)
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+    
     # Store the original model name for saving
     model.original_model_name = model_name
     return model

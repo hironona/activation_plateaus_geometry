@@ -17,17 +17,16 @@ sys.path.append('./scripts')
 from utils import load_activations, load_config, get_n_layers, compute_relative_distances, generate_interpolation_results_plot, construct_filepath
 
 config = load_config()
-MODEL_NAME = config['model_name']
 N_STEPS = config['n_steps']
 
 
-def variant1_interpolate_layer0(shared_id, pairs_ids):
+def variant1_interpolate_layer0(shared_id, pairs_ids, model_name):
     """Variant 1: Interpolate in layer 0, record in all subsequent layers."""
     print("\nVariant 1: Interpolate in layer 0, record in all layers")
 
     plot_data = {}
     for pair_ids in pairs_ids:
-        activations = load_activations(MODEL_NAME, shared_id, 0, pair_ids, N_STEPS)
+        activations = load_activations(model_name, shared_id, 0, pair_ids, N_STEPS)
         pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
         layer_dict = {}
         for key, layer_activations in activations.items():
@@ -40,7 +39,7 @@ def variant1_interpolate_layer0(shared_id, pairs_ids):
         data_dict=plot_data,
         suptitle="Relative Distances (Interpolate in Layer 0)",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"./plots/{MODEL_NAME}/relative_distances_layerwise_layer0_interpolation.png",
+        output_path=f"./plots/{model_name}/relative_distances_layerwise_layer0_interpolation.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
@@ -49,7 +48,7 @@ def variant1_interpolate_layer0(shared_id, pairs_ids):
     )
 
 
-def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids):
+def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids, model_name):
     """Variant 2: Interpolate in each layer, record in last layer only."""
     print("\nVariant 2: Interpolate in each layer, record in last layer")
 
@@ -60,7 +59,7 @@ def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids):
         pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
         layer_dict = {}
         for interpolation_layer in range(n_layers - 1):
-            activations = load_activations(MODEL_NAME, shared_id, interpolation_layer, pair_ids, N_STEPS)
+            activations = load_activations(model_name, shared_id, interpolation_layer, pair_ids, N_STEPS)
             distances = compute_relative_distances(activations[last_layer_key])
             layer_dict[f"Layer {interpolation_layer}"] = torch.tensor(distances)
         plot_data[pair_name] = layer_dict
@@ -69,7 +68,7 @@ def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids):
         data_dict=plot_data,
         suptitle="Relative Distances (Record in Last Layer)",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"./plots/{MODEL_NAME}/relative_distances_layerwise_last_layer_recording.png",
+        output_path=f"./plots/{model_name}/relative_distances_layerwise_last_layer_recording.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
@@ -78,7 +77,7 @@ def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids):
     )
 
 
-def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids):
+def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids, model_name: str):
     """Variant 3: Interpolate in layer i, record in layer i+N for various N."""
     print("\nVariant 3: Interpolate in layer i, record in layer i+N")
 
@@ -90,7 +89,7 @@ def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids):
             pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
             layer_dict = {}
             for interpolation_layer in range(n_layers - N):
-                activations = load_activations(MODEL_NAME, shared_id, interpolation_layer, pair_ids, N_STEPS)
+                activations = load_activations(model_name, shared_id, interpolation_layer, pair_ids, N_STEPS)
                 target_layer_key = f'layer{interpolation_layer + N}_resid_post'
                 distances = compute_relative_distances(activations[target_layer_key])
                 layer_dict[f"Layer {interpolation_layer}"] = torch.tensor(distances)
@@ -100,7 +99,7 @@ def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids):
             data_dict=plot_data,
             suptitle=f"Relative Distances (N={N})",
             ylabel="Relative Distance to Token A (0) vs Token B (1)",
-            output_path=f"./plots/{MODEL_NAME}/relative_distances_layerwise_N{N}.png",
+            output_path=f"./plots/{model_name}/relative_distances_layerwise_N{N}.png",
             n_steps=N_STEPS,
             shared_id=shared_id,
             pairs_ids=pairs_ids,
@@ -111,8 +110,12 @@ def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids):
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--data_type', type=str, choices=['image', 'text'], required=True, help='Type of data/model to use (image or text)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+
     args = parser.parse_args()
+
+    MODEL_NAME = config['model_names'][args.model_type]
 
     if args.data_type == 'image':
         SHARED_ID = config['image']['shared_image_id']
@@ -134,9 +137,10 @@ def main():
     n_layers = get_n_layers(activations)
     print(f"Model has {n_layers} layers")
 
-    variant1_interpolate_layer0(SHARED_ID, PAIRS_IDS)
-    variant2_record_last_layer(n_layers, SHARED_ID, PAIRS_IDS)
-    variant3_record_layer_plus_n(n_layers, SHARED_ID, PAIRS_IDS)
+    variant1_interpolate_layer0(SHARED_ID, PAIRS_IDS, MODEL_NAME)
+    if not args.interpolate_only_first_layer:
+        variant2_record_last_layer(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)
+        variant3_record_layer_plus_n(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)
 
     print("\n=== Complete ===")
 

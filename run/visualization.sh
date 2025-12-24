@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# Partial experiment script for activation plateau analyses
-
-echo "Running activation extraction (normal)..."
-python ./scripts/interpolate_and_record_activations.py --model_type hooked_transformer --interpolate_only_first_layer
-
 echo "Generating plots..."
 # python ./scripts/spline_plots.py
 python ./scripts/step_sizes_plots.py --model_type hooked_transformer --data_type text

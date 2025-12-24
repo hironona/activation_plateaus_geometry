@@ -3,6 +3,8 @@
 Full Residual Jacobian Analysis: Compute and plot ∂(layer_N resid_post) / ∂(layer_0 resid_post).
 """
 
+#TODO: Add option for ViT models
+
 import torch
 import os
 from tqdm import tqdm
@@ -12,9 +14,6 @@ sys.path.append('./scripts')
 from utils import load_model, load_config, load_activations, generate_interpolation_results_plot
 
 config = load_config()
-MODEL_NAME = config['model_name']
-# SHARED_CONTEXT = config['shared_context']
-# TOKEN_PAIRS = config['token_pairs']
 N_STEPS = config['n_steps']
 
 
@@ -57,8 +56,12 @@ def compute_jacobian_full_residual(model, resid_post_interpolated: torch.Tensor,
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--data_type', type=str, choices=['image', 'text'], required=True, help='Type of data/model to use (image or text)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+
     args = parser.parse_args()
+
+    MODEL_NAME = config['model_names'][args.model_type]
 
     if args.data_type == 'image':
         SHARED_ID = config['image']['shared_image_id']

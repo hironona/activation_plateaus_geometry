@@ -15,11 +15,10 @@ sys.path.append('./scripts')
 from utils import load_config, load_activations, generate_interpolation_results_plot
 
 config = load_config()
-MODEL_NAME = config['model_name']
 N_STEPS = config['n_steps']
 
 
-def compute_step_sizes(activations: Dict[str, torch.Tensor], hook_name: str) -> Dict[str, torch.Tensor]:
+def compute_step_sizes_hooked_transformer(activations: Dict[str, torch.Tensor], hook_name: str) -> Dict[str, torch.Tensor]:
     """Compute step sizes (L2 norm of differences between consecutive steps) for each layer."""
     step_sizes = {}
 
@@ -34,11 +33,30 @@ def compute_step_sizes(activations: Dict[str, torch.Tensor], hook_name: str) -> 
 
     return step_sizes
 
+def compute_step_sizes_vit(activations: Dict[str, torch.Tensor], hook_name: str) -> Dict[str, torch.Tensor]:
+    """Compute step sizes (L2 norm of differences between consecutive steps) for each layer."""
+    step_sizes = {}
+
+    for key, layer_activations in activations.items():
+        if key.startswith('layer') and key.endswith(f'_{hook_name}'):
+            last_token = layer_activations[:, 0, :]  # [n_steps, hidden_dim]
+            step_diffs = last_token[1:] - last_token[:-1]  # [n_steps-1, hidden_dim]
+            step_norms = torch.norm(step_diffs, p=2, dim=1)  # [n_steps-1]
+
+            layer_idx = int(key.split('_')[0].replace('layer', ''))
+            step_sizes[f"Layer {layer_idx}"] = step_norms
+
+    return step_sizes
+
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--data_type', type=str, choices=['image', 'text'], required=True, help='Type of data/model to use (image or text)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+
     args = parser.parse_args()
+
+    MODEL_NAME = config['model_names'][args.model_type]
 
     if args.data_type == 'image':
         SHARED_ID = config['image']['shared_image_id']
@@ -54,7 +72,10 @@ def main():
     for pair_ids in PAIRS_IDS:
         activations = load_activations(MODEL_NAME, SHARED_ID, 0, pair_ids, N_STEPS)
         pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
-        plot_data[pair_name] = compute_step_sizes(activations, 'resid_post')
+        if args.model_type == 'hooked_transformer':
+            plot_data[pair_name] = compute_step_sizes_hooked_transformer(activations, 'resid_post')
+        elif args.model_type == 'vit':
+            plot_data[pair_name] = compute_step_sizes_vit(activations, 'resid_post')
 
     # Generate plot
     output_path = f"./plots/{MODEL_NAME}/step_sizes_resid_post.png"

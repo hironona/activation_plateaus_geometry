@@ -25,7 +25,6 @@ sys.path.append('./scripts')
 from utils import load_model, load_config, slerp_rescale, construct_filepath
 
 config = load_config()
-MODEL_NAME = config['model_name']
 N_STEPS = config['n_steps']
 
 # Hook types to record at each layer
@@ -263,20 +262,20 @@ def interpolate_vit_layer(
             return output
     
     # Hook to collect activations at subsequent layers
-    def create_collection_hook(layer_idx, hook_type):
+    def create_collection_hook(hook_name, target_layer):
         def hook_fn(module, input, output):
             if isinstance(output, tuple):
                 output = output[0]
             
             # Freeze if requested
-            if freeze_attention and hook_type == 'attention':
+            if freeze_attention and hook_name == 'attention':
                 mean_activation = output[:, 0, :].mean(dim=0, keepdim=True)
                 output[:, 0, :] = mean_activation.expand(output.shape[0], -1)
-            elif freeze_mlp and hook_type == 'mlp':
+            elif freeze_mlp and hook_name == 'mlp':
                 mean_activation = output[:, 0, :].mean(dim=0, keepdim=True)
                 output[:, 0, :] = mean_activation.expand(output.shape[0], -1)
             
-            activations[f'layer{layer_idx}_{hook_type}_out'] = output.cpu().clone()
+            activations[f'layer{target_layer}_{hook_name}_out'] = output.cpu().clone()
         return hook_fn
     
     # Register hooks
@@ -353,12 +352,18 @@ def interpolate_layer_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tens
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit'], required=True, help='Type of model to use (hooked_transformer or vit)')
     parser.add_argument('--freeze_attention', action='store_true', help='Freeze attention outputs to first step')
     parser.add_argument('--freeze_mlp', action='store_true', help='Freeze MLP outputs to first step')
-    parser.add_argument('--data_type', type=str, choices=['text', 'image'], default='text', help='Type of data type to use (text or image)')
     parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
+
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+
     args = parser.parse_args()
+
+    MODEL_NAME = config['model_names'][args.model_type]
+
+    # if model type is vit, choose the model set default in config
 
     print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
     print(f"Freeze attention: {args.freeze_attention} | Freeze MLP: {args.freeze_mlp}")
@@ -376,7 +381,7 @@ def main():
     model_type = args.model_type
     if args.data_type == 'text':
         SHARED_CONTEXT = config['text']['shared_context']
-        PAIRS = config['text']['pairs']
+        PAIRS = config['text']['token_pairs']
         params_collect = {
             'model': model,
             'shared_context': SHARED_CONTEXT,
@@ -401,7 +406,7 @@ def main():
 
     elif args.data_type == 'image':
         SHARED_IMAGE = config["image"]["shared_image"]
-        PAIRS = config['image']['pairs']
+        PAIRS = config['image']['image_pairs']
         processor = ViTImageProcessor.from_pretrained(MODEL_NAME)
         params_collect = {
             'model': model,

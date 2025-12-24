@@ -1,19 +1,21 @@
 # Configuration for paper_analyses_v2 project
 
 n_steps: 50
-model_name: "gpt2-large"
-# model_name: "google/vit-base-patch16-224"
-# model_name: "resnet50"
+
+model_names:
+  hooked_transformer: "gpt2-large"
+  vit: "google/vit-base-patch16-224"
+  resnet: "resnet50"
 
 text: 
   shared_context: "The house was"
-  pairs:
+  token_pairs:
     - ["big", "in"]
     - ["big", "large"]
 
 image:
   shared_image: "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg"
-  pairs:
+  image_pairs:
     - [
         "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg",  # cat
         "https://farm8.staticflickr.com/7028/6656578667_9011675967_z.jpg" # dog

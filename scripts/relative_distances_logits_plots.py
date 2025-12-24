@@ -14,7 +14,6 @@ sys.path.append('./scripts')
 from utils import load_activations, load_config, compute_relative_distances, construct_filepath, generate_interpolation_results_plot
 
 config = load_config()
-MODEL_NAME = config['model_name']
 N_STEPS = config['n_steps']
 
 FREEZING_VARIANTS = [
@@ -26,8 +25,12 @@ FREEZING_VARIANTS = [
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--data_type', type=str, choices=['image', 'text'], required=True, help='Type of data/model to use (image or text)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+
     args = parser.parse_args()
+
+    MODEL_NAME = config['model_names'][args.model_type]
 
     if args.data_type == 'image':
         SHARED_ID = config['image']['shared_image_id']
