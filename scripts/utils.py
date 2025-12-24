@@ -130,25 +130,25 @@ def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     return slerp_result * target_norm
 
 
-def construct_filepath(model_name: str, shared_context: str, interpolation_layer: int, token_pair: List[str], n_steps: int, freeze_suffix: str = "") -> str:
+def construct_filepath(model_name: str, shared_data: str, interpolation_layer: int, variable_data_pair: List[str], n_steps: int, freeze_suffix: str = "") -> str:
     """Construct full filepath for activation file.
 
     Args:
         freeze_suffix: Optional freeze suffix like "_freeze_attn" or "_freeze_mlp"
     """
-    context_clean = shared_context.replace(" ", "_").replace(".", "").replace(",", "").replace("'", "").replace('"', "")
-    tokens_str = "_".join(token_pair)
+    context_clean = shared_data.replace(" ", "_").replace(".", "").replace(",", "").replace("'", "").replace('"', "")
+    tokens_str = "_".join(variable_data_pair)
     filename = f"interpolate_layer{interpolation_layer}{freeze_suffix}_{context_clean}_[{tokens_str}]_{n_steps}steps.pt"
     return f"./activations/{model_name}/{filename}"
 
 
-def load_activations(model_name: str, shared_context: str, interpolation_layer: int, token_pair: List[str], n_steps: int, freeze_suffix: str = "") -> Dict:
+def load_activations(model_name: str, shared_data: str, interpolation_layer: int, variable_data_pair: List[str], n_steps: int, freeze_suffix: str = "") -> Dict:
     """Load activations from file.
 
     Args:
         freeze_suffix: Optional freeze suffix like "_freeze_attn" or "_freeze_mlp"
     """
-    filepath = construct_filepath(model_name, shared_context, interpolation_layer, token_pair, n_steps, freeze_suffix)
+    filepath = construct_filepath(model_name, shared_data, interpolation_layer, variable_data_pair, n_steps, freeze_suffix)
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Activations file not found: {filepath}")
     return torch.load(filepath, map_location='cpu')

@@ -4,6 +4,9 @@ activations/
 # Generated plots
 plots/
 
+# .ipynb for Commands
+main.ipynb
+
 # Python cache
 __pycache__/
 *.pyc
