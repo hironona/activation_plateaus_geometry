@@ -7,6 +7,7 @@ For each layer and step, compute Hamming distance between consecutive spline cod
 normalized by the L2 step size in resid_mid space.
 """
 
+import argparse
 import os
 import sys
 import torch
@@ -17,8 +18,6 @@ from utils import load_activations, load_config, generate_interpolation_results_
 
 config = load_config()
 MODEL_NAME = config['model_name']
-SHARED_CONTEXT = config['shared_context']
-TOKEN_PAIRS = config['token_pairs']
 N_STEPS = config['n_steps']
 
 
@@ -36,10 +35,21 @@ def compute_normalized_hamming_distances(mlp_post_activations, resid_mid_activat
     return normalized_distances
 
 def main():
-    print(f"Model: {MODEL_NAME} | Context: '{SHARED_CONTEXT}' | Steps: {N_STEPS}")
+    parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
+    parser.add_argument('--data_type', type=str, choices=['image', 'text'], required=True, help='Type of data/model to use (image or text)')
+    args = parser.parse_args()
 
+    if args.data_type == 'image':
+        SHARED_ID = config['image']['shared_image_id']
+        PAIRS_IDS = config['image']['pairs_ids']
+    elif args.data_type == 'text':
+        SHARED_ID = config['text']['shared_context']
+        PAIRS_IDS = config['text']['token_pairs']
+
+    print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
+    
     # Load activations for all token pairs
-    all_activations = [load_activations(MODEL_NAME, SHARED_CONTEXT, 0, token_pair, N_STEPS) for token_pair in TOKEN_PAIRS]
+    all_activations = [load_activations(MODEL_NAME, SHARED_ID, 0, pair_ids, N_STEPS) for pair_ids in PAIRS_IDS]
 
     # Get number of layers
     n_layers = len([k for k in all_activations[0].keys() if k.startswith('layer') and k.endswith('_mlp_post')])
@@ -55,7 +65,7 @@ def main():
             if distances:
                 layer_data[f"Layer {layer_idx}"] = torch.tensor(distances)
 
-        pair_name = f"{TOKEN_PAIRS[pair_idx][0]}_{TOKEN_PAIRS[pair_idx][1]}"
+        pair_name = f"{PAIRS_IDS[pair_idx][0]}_{PAIRS_IDS[pair_idx][1]}"
         plot_data[pair_name] = layer_data
 
     # Generate plot
@@ -66,8 +76,8 @@ def main():
         ylabel="Normalized Hamming Distance",
         output_path=output_path,
         n_steps=N_STEPS - 1,
-        shared_context=SHARED_CONTEXT,
-        token_pairs=TOKEN_PAIRS,
+        shared_id=SHARED_ID,
+        pairs_ids=PAIRS_IDS,
         alpha_range=[0, 1],
         skip_interpolation_layer=False
     )

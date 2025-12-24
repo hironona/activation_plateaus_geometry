@@ -7,13 +7,14 @@ import torch
 import os
 from tqdm import tqdm
 import sys
+import argparse
 sys.path.append('./scripts')
 from utils import load_model, load_config, load_activations, generate_interpolation_results_plot
 
 config = load_config()
 MODEL_NAME = config['model_name']
-SHARED_CONTEXT = config['shared_context']
-TOKEN_PAIRS = config['token_pairs']
+# SHARED_CONTEXT = config['shared_context']
+# TOKEN_PAIRS = config['token_pairs']
 N_STEPS = config['n_steps']
 
 
@@ -55,7 +56,18 @@ def compute_jacobian_full_residual(model, resid_post_interpolated: torch.Tensor,
 
 
 def main():
-    print(f"Model: {MODEL_NAME} | Context: '{SHARED_CONTEXT}' | Steps: {N_STEPS}")
+    parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
+    parser.add_argument('--data_type', type=str, choices=['image', 'text'], required=True, help='Type of data/model to use (image or text)')
+    args = parser.parse_args()
+
+    if args.data_type == 'image':
+        SHARED_ID = config['image']['shared_image_id']
+        PAIRS_IDS = config['image']['pairs_ids']
+    elif args.data_type == 'text':
+        SHARED_ID = config['text']['shared_context']
+        PAIRS_IDS = config['text']['token_pairs']
+
+    print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
 
     model = load_model(MODEL_NAME)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -68,15 +80,15 @@ def main():
 
     jacobian_norms = {}
 
-    for token_pair in tqdm(TOKEN_PAIRS, desc="Computing Full Residual Jacobians"):
-        activations = load_activations(MODEL_NAME, SHARED_CONTEXT, 0, token_pair, N_STEPS)
+    for pair_ids in tqdm(PAIRS_IDS, desc="Computing Full Residual Jacobians"):
+        activations = load_activations(MODEL_NAME, SHARED_ID, 0, pair_ids, N_STEPS)
         resid_post_layer0 = activations['layer0_resid_post']
 
         jacobians = compute_jacobian_full_residual(model, resid_post_layer0, device)
 
         norms = torch.norm(jacobians.view(jacobians.shape[0], -1), dim=1)
 
-        pair_key = f"{token_pair[0]}_{token_pair[1]}"
+        pair_key = f"{pair_ids[0]}_{pair_ids[1]}"
         jacobian_norms[pair_key] = norms
 
         del jacobians, resid_post_layer0, activations
@@ -89,8 +101,8 @@ def main():
         ylabel="Frobenius Norm",
         output_path=f"./plots/{MODEL_NAME}/jacobians_full_residual_norms.png",
         n_steps=N_STEPS,
-        shared_context=SHARED_CONTEXT,
-        token_pairs=TOKEN_PAIRS
+        shared_id=SHARED_ID,
+        pairs_ids=PAIRS_IDS,
     )
 
     print("\n=== Complete ===")

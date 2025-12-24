@@ -375,18 +375,18 @@ def main():
 
     # configure parameters in advance for convenience
     if args.data_type == 'text':
-        shared_context = config['text']['shared_context']
-        pairs = config['text']['pairs']
+        SHARED_CONTEXT = config['text']['shared_context']
+        PAIRS = config['text']['pairs']
         model_type = 'hooked_transformer'
         params_collect = {
             'model': model,
-            'shared_context': shared_context,
+            'shared_context': SHARED_CONTEXT,
             'variable_data': None,  # placeholder for token
             'device': device
         }
         params_interpolate = {
             'model': model,
-            'shared_context': shared_context,
+            'shared_context': SHARED_CONTEXT,
             'resid_post_a': None,
             'resid_post_b': None,
             'interpolation_layer': None,
@@ -397,12 +397,12 @@ def main():
         }
 
         # for path construction
-        shared = shared_context
-        pairs_ids = pairs
+        SHARED_ID = SHARED_CONTEXT
+        PAIRS_IDS = PAIRS
 
     elif args.data_type == 'image':
-        shared_image = config["image"]["shared_image"]
-        pairs = config['image']['pairs']
+        SHARED_IMAGE = config["image"]["shared_image"]
+        PAIRS = config['image']['pairs']
         processor = ViTImageProcessor.from_pretrained(MODEL_NAME)
         model_type = 'vit'
         params_collect = {
@@ -414,7 +414,7 @@ def main():
         params_interpolate = {
             'model': model,
             'processor': processor,
-            'shared_image': shared_image,
+            'shared_image': SHARED_IMAGE,
             'resid_post_a': None,
             'resid_post_b': None,
             'interpolation_layer': None,
@@ -425,10 +425,10 @@ def main():
         }
 
         # for path construction
-        shared = config['image']['shared_image_id']
-        pairs_ids = config['image']['pairs_ids']
+        SHARED_ID = config['image']['shared_image_id']
+        PAIRS_IDS = config['image']['pairs_ids']
 
-    for i, pair in enumerate(pairs):
+    for i, pair in enumerate(PAIRS):
         print(f"\nProcessing {pair}")
 
         # Collect reference activations for both tokens
@@ -461,7 +461,7 @@ def main():
             )
 
             # Save to disk
-            filepath = construct_filepath(MODEL_NAME, shared, interpolation_layer, pairs_ids[i], N_STEPS, freeze_suffix)
+            filepath = construct_filepath(MODEL_NAME, SHARED_ID, interpolation_layer, PAIRS_IDS[i], N_STEPS, freeze_suffix)
             torch.save(interpolated_activations, filepath)
 
     print("\n=== Complete ===")

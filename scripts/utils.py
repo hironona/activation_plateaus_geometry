@@ -130,25 +130,25 @@ def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     return slerp_result * target_norm
 
 
-def construct_filepath(model_name: str, shared_data: str, interpolation_layer: int, variable_data_pair: List[str], n_steps: int, freeze_suffix: str = "") -> str:
+def construct_filepath(model_name: str, shared_id: str, interpolation_layer: int, pair_ids: List[str], n_steps: int, freeze_suffix: str = "") -> str:
     """Construct full filepath for activation file.
 
     Args:
         freeze_suffix: Optional freeze suffix like "_freeze_attn" or "_freeze_mlp"
     """
-    context_clean = shared_data.replace(" ", "_").replace(".", "").replace(",", "").replace("'", "").replace('"', "")
-    tokens_str = "_".join(variable_data_pair)
+    context_clean = shared_id.replace(" ", "_").replace(".", "").replace(",", "").replace("'", "").replace('"', "")
+    tokens_str = "_".join(pair_ids)
     filename = f"interpolate_layer{interpolation_layer}{freeze_suffix}_{context_clean}_[{tokens_str}]_{n_steps}steps.pt"
     return f"./activations/{model_name}/{filename}"
 
 
-def load_activations(model_name: str, shared_data: str, interpolation_layer: int, variable_data_pair: List[str], n_steps: int, freeze_suffix: str = "") -> Dict:
+def load_activations(model_name: str, shared_id: str, interpolation_layer: int, pair_ids: List[str], n_steps: int, freeze_suffix: str = "") -> Dict:
     """Load activations from file.
 
     Args:
         freeze_suffix: Optional freeze suffix like "_freeze_attn" or "_freeze_mlp"
     """
-    filepath = construct_filepath(model_name, shared_data, interpolation_layer, variable_data_pair, n_steps, freeze_suffix)
+    filepath = construct_filepath(model_name, shared_id, interpolation_layer, pair_ids, n_steps, freeze_suffix)
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Activations file not found: {filepath}")
     return torch.load(filepath, map_location='cpu')
@@ -198,8 +198,8 @@ def generate_interpolation_results_plot(
     ylabel: str,
     output_path: str,
     n_steps: int,
-    shared_context: str,
-    token_pairs: List[List[str]],
+    shared_id: str,
+    pairs_ids: List[List[str]],
     alpha_range: List[float] = [0, 1],
     skip_interpolation_layer: bool = True
 ) -> None:
@@ -225,9 +225,9 @@ def generate_interpolation_results_plot(
     y_min, y_max = float('inf'), float('-inf')
     has_multi_layer_data = False
 
-    for i, token_pair in enumerate(token_pairs):
+    for i, pair_ids in enumerate(pairs_ids):
         ax = axes[i]
-        token_key = f"{token_pair[0]}_{token_pair[1]}"
+        token_key = f"{pair_ids[0]}_{pair_ids[1]}"
         data = data_dict[token_key]
 
         is_multi_layer = isinstance(data, dict)
@@ -265,13 +265,13 @@ def generate_interpolation_results_plot(
         # Reference lines and labels
         ax.axvline(x=0, color='gray', linestyle='--', alpha=0.8, linewidth=1.5)
         ax.axvline(x=1, color='gray', linestyle='--', alpha=0.8, linewidth=1.5)
-        ax.text(0, -0.06, f'"{token_pair[0]}"', ha='center', va='top',
+        ax.text(0, -0.06, f'"{pair_ids[0]}"', ha='center', va='top',
                fontsize=10, color='gray', alpha=0.9, transform=ax.get_xaxis_transform())
-        ax.text(1, -0.06, f'"{token_pair[1]}"', ha='center', va='top',
+        ax.text(1, -0.06, f'"{pair_ids[1]}"', ha='center', va='top',
                fontsize=10, color='gray', alpha=0.9, transform=ax.get_xaxis_transform())
 
         # Formatting
-        ax.set_title(f'{shared_context} [{token_pair[0]} → {token_pair[1]}]', fontsize=14)
+        ax.set_title(f'{shared_id} [{pair_ids[0]} → {pair_ids[1]}]', fontsize=14)
         ax.set_xlabel('Interpolation α', fontsize=12)
         if i == 0:
             ax.set_ylabel(ylabel, fontsize=12)

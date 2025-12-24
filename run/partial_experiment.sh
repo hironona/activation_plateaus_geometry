@@ -1,15 +1,9 @@
 #!/bin/bash
 
-# Full experiment script for activation plateau analyses
+# Partial experiment script for activation plateau analyses
 
 echo "Running activation extraction (normal)..."
 python ./scripts/interpolate_and_record_activations.py
-
-# echo "Running activation extraction (attention frozen)..."
-# python ./scripts/interpolate_and_record_activations.py --freeze_attention
-
-# echo "Running activation extraction (MLP frozen)..."
-# python ./scripts/interpolate_and_record_activations.py --freeze_mlp
 
 echo "Generating plots..."
 python ./scripts/spline_plots.py

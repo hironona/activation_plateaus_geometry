@@ -7,13 +7,14 @@ import torch
 import os
 from tqdm import tqdm
 import sys
+import argparse
 sys.path.append('./scripts')
 from utils import load_model, load_config, load_activations, generate_interpolation_results_plot
 
 config = load_config()
 MODEL_NAME = config['model_name']
-SHARED_CONTEXT = config['shared_context']
-TOKEN_PAIRS = config['token_pairs']
+# SHARED_CONTEXT = config['shared_context']
+# TOKEN_PAIRS = config['token_pairs']
 N_STEPS = config['n_steps']
 
 
@@ -65,7 +66,18 @@ def compute_jacobian_attention(model, resid_pre_interpolated: torch.Tensor, laye
 
 
 def main():
-    print(f"Model: {MODEL_NAME} | Context: '{SHARED_CONTEXT}' | Steps: {N_STEPS}")
+    parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
+    parser.add_argument('--data_type', type=str, choices=['image', 'text'], required=True, help='Type of data/model to use (image or text)')
+    args = parser.parse_args()
+
+    if args.data_type == 'image':
+        SHARED_ID = config['image']['shared_image_id']
+        PAIRS_IDS = config['image']['pairs_ids']
+    elif args.data_type == 'text':
+        SHARED_ID = config['text']['shared_context']
+        PAIRS_IDS = config['text']['token_pairs']
+
+    print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
 
     model = load_model(MODEL_NAME)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -79,14 +91,14 @@ def main():
     jacobian_norms_by_pair = {}
     jacobians_by_pair = {}
 
-    for token_pair in TOKEN_PAIRS:
-        pair_key = f"{token_pair[0]}_{token_pair[1]}"
+    for pair_ids in PAIRS_IDS:
+        pair_key = f"{pair_ids[0]}_{pair_ids[1]}"
         jacobian_norms_by_pair[pair_key] = {}
         jacobians_by_pair[pair_key] = []
 
-        activations = load_activations(MODEL_NAME, SHARED_CONTEXT, 0, token_pair, N_STEPS)
+        activations = load_activations(MODEL_NAME, SHARED_ID, 0, pair_ids, N_STEPS)
 
-        for layer_idx in tqdm(range(1, n_layers), desc=f"Computing Attention Jacobians for {token_pair}"):
+        for layer_idx in tqdm(range(1, n_layers), desc=f"Computing Attention Jacobians for {pair_key}"):
             resid_pre = activations[f'layer{layer_idx-1}_resid_post']
             jacobians = compute_jacobian_attention(model, resid_pre, layer_idx, device, activations)
 
@@ -110,8 +122,8 @@ def main():
         ylabel="Frobenius Norm",
         output_path=f"./plots/{MODEL_NAME}/jacobians_attention_norms.png",
         n_steps=N_STEPS,
-        shared_context=SHARED_CONTEXT,
-        token_pairs=TOKEN_PAIRS,
+        shared_id=SHARED_ID,
+        pairs_ids=PAIRS_IDS,
         skip_interpolation_layer=False
     )
 
@@ -132,8 +144,8 @@ def main():
         ylabel="Frobenius Norm",
         output_path=f"./plots/{MODEL_NAME}/jacobians_attention_product.png",
         n_steps=N_STEPS,
-        shared_context=SHARED_CONTEXT,
-        token_pairs=TOKEN_PAIRS
+        shared_id=SHARED_ID,
+        pair_ids=PAIRS_IDS
     )
 
     print("\n=== Complete ===")
