@@ -161,12 +161,10 @@ def interpolate_resid_post_layer(
     # Storage for collected activations (keep interpolated values on device for injection)
     activations = {f'layer{interpolation_layer}_resid_post': interpolated_resid_post.cpu().clone()}
 
-    injection_index = 0 if isinstance(model, ViTForImageClassification) else -1  # Last token for HT, CLS token for ViT
-
     # Hook to inject interpolated activations (already on device, no transfer needed)
     def inject_hook(activation, hook):
         # interpolated_resid_post is [n_steps, hidden_dim], activation is [n_steps, seq_len, hidden_dim]
-        activation[:, injection_index, :] = interpolated_resid_post
+        activation[:, -1, :] = interpolated_resid_post
         return activation
 
     # Hook to collect and optionally freeze activations
@@ -174,12 +172,11 @@ def interpolate_resid_post_layer(
         def hook_fn(activation, hook):
             # Freeze to mean across all steps if requested
             if freeze_attention and hook_name == 'attn_out':
-                mean_activation = activation[:, injection_index, :].mean(dim=0, keepdim=True)
-                activation[:, injection_index, :] = mean_activation.expand(activation.shape[0], -1)
+                mean_activation = activation[:, -1, :].mean(dim=0, keepdim=True)
+                activation[:, -1, :] = mean_activation.expand(activation.shape[0], -1)
             elif freeze_mlp and hook_name == 'mlp_out':
-                mean_activation = activation[:, injection_index, :].mean(dim=0, keepdim=True)
-                activation[:, injection_index, :] = mean_activation.expand(activation.shape[0], -1)
-
+                mean_activation = activation[:, -1, :].mean(dim=0, keepdim=True)
+                activation[:, -1, :] = mean_activation.expand(activation.shape[0], -1)
             activations[f'layer{target_layer}_{hook_name}'] = activation.cpu().clone()
             return activation
         return hook_fn
@@ -279,7 +276,7 @@ def interpolate_vit_layer(
                 mean_activation = output[:, 0, :].mean(dim=0, keepdim=True)
                 output[:, 0, :] = mean_activation.expand(output.shape[0], -1)
             
-            activations[f'layer{layer_idx}_{hook_type}_out'] = output[:, 0, :].cpu().clone()
+            activations[f'layer{layer_idx}_{hook_type}_out'] = output.cpu().clone()
         return hook_fn
     
     # Register hooks
@@ -356,9 +353,11 @@ def interpolate_layer_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tens
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit'], required=True, help='Type of model to use (hooked_transformer or vit)')
     parser.add_argument('--freeze_attention', action='store_true', help='Freeze attention outputs to first step')
     parser.add_argument('--freeze_mlp', action='store_true', help='Freeze MLP outputs to first step')
     parser.add_argument('--data_type', type=str, choices=['text', 'image'], default='text', help='Type of data type to use (text or image)')
+    parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
     args = parser.parse_args()
 
     print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
@@ -374,10 +373,10 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # configure parameters in advance for convenience
+    model_type = args.model_type
     if args.data_type == 'text':
         SHARED_CONTEXT = config['text']['shared_context']
         PAIRS = config['text']['pairs']
-        model_type = 'hooked_transformer'
         params_collect = {
             'model': model,
             'shared_context': SHARED_CONTEXT,
@@ -404,7 +403,6 @@ def main():
         SHARED_IMAGE = config["image"]["shared_image"]
         PAIRS = config['image']['pairs']
         processor = ViTImageProcessor.from_pretrained(MODEL_NAME)
-        model_type = 'vit'
         params_collect = {
             'model': model,
             'processor': processor,
@@ -446,7 +444,11 @@ def main():
         elif args.freeze_mlp:
             freeze_suffix = "_freeze_mlp"
 
-        pbar = tqdm(range(n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
+        if args.interpolate_only_first_layer:
+            pbar = tqdm([0], desc=f"Interpolating {pair}{freeze_suffix}")
+        else:
+            pbar = tqdm(range(n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
+
         for interpolation_layer in pbar:
             
             params_interpolate['resid_post_a'] = reference_activations['token_0']
