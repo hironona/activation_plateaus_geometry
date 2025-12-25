@@ -112,6 +112,7 @@ def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
     parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
     parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+    parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
 
     args = parser.parse_args()
 
@@ -138,6 +139,7 @@ def main():
     print(f"Model has {n_layers} layers")
 
     variant1_interpolate_layer0(SHARED_ID, PAIRS_IDS, MODEL_NAME)
+    
     if not args.interpolate_only_first_layer:
         variant2_record_last_layer(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)
         variant3_record_layer_plus_n(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)

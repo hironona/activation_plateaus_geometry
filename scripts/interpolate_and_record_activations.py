@@ -22,7 +22,7 @@ from PIL import Image
 import requests
 import sys
 sys.path.append('./scripts')
-from utils import load_model, load_config, slerp_rescale, construct_filepath
+from utils import load_model, load_config, slerp_rescale, construct_filepath, get_n_layers_from_model
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -65,7 +65,7 @@ def collect_original_activations_hooked_transformer(model: HookedTransformer, sh
 
 def collect_original_activations_vit(model: ViTForImageClassification, processor: ViTImageProcessor, variable_data: str, device: str) -> Dict[str, torch.Tensor]:
     """
-    Collect resid_post activations at all layers for a given token.
+    Collect resid_post activations at all layers for the CLS token of the given image.
 
     Returns dict with keys like 'layer{i}_resid_post' -> tensor of shape [1, hidden_dim]
     """
@@ -82,6 +82,8 @@ def collect_original_activations_vit(model: ViTForImageClassification, processor
             # We take the CLS token (first token) activation
             if isinstance(output, tuple):
                 output = output[0]
+            # output shape: [batch_size, seq_len, hidden_dim]
+            # CLS token is at index 0
             activations[f'layer{layer_idx}_resid_post'] = output[:, 0, :].cpu().clone()
         return hook_fn
 
@@ -94,7 +96,9 @@ def collect_original_activations_vit(model: ViTForImageClassification, processor
     with torch.no_grad():
         _ = model(**inputs)
     
+    # Clean up
     del inputs
+    torch.cuda.empty_cache() if device == 'cuda' else None
 
     # Remove hooks
     for hook in hooks:
@@ -206,7 +210,7 @@ def interpolate_resid_post_layer(
 def interpolate_vit_layer(
     model,
     processor,
-    shared_image: str, # url_to_image_a
+    shared_images: Dict[str, str], # urls_to_images
     resid_post_a: Dict[str, torch.Tensor],
     resid_post_b: Dict[str, torch.Tensor],
     interpolation_layer: int,
@@ -217,6 +221,7 @@ def interpolate_vit_layer(
 ) -> Dict[str, torch.Tensor]:
     """
     Interpolate at specified layer in ViT and record all downstream activations.
+    Interpolates only the CLS token activation.
     
     Args:
         model: ViT model
@@ -232,10 +237,15 @@ def interpolate_vit_layer(
     Returns:
         Dict with keys like 'layer{i}_output' -> tensors of shape [n_steps, hidden_dim]
         and 'logits' -> tensor of shape [n_steps, num_classes]
-    """    
+    """
+    if 'similar1' not in shared_images or 'similar2' not in shared_images or 'distinct' not in shared_images:
+        raise ValueError("shared_images must contain 'similar1', 'similar2', and 'distinct' keys with image URLs.")
+    
+    n_layers = get_n_layers_from_model(model)
     # Get activations at interpolation layer for both images
     resid_a = resid_post_a[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]
     resid_b = resid_post_b[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]
+    assert not (1e-5 < (resid_a - resid_b).sum() < 1e-5), "Resid_post activations for both images are identical."
     
     # Compute SLERP interpolations
     resid_a_device = resid_a.to(device)
@@ -247,10 +257,10 @@ def interpolate_vit_layer(
         for alpha in alphas
     ])  # [n_steps, hidden_dim]
     
-    # Storage for collected activations
+    # Storage for collected activations (keep device copy for injection)
     activations = {f'layer{interpolation_layer}_resid_post': interpolated_activations.cpu().clone()}
     
-    # Hook to inject interpolated activations
+    # Hook to inject interpolated activations at the interpolation layer
     def inject_hook(module, input, output):
         if isinstance(output, tuple):
             output = list(output)
@@ -261,56 +271,143 @@ def interpolate_vit_layer(
             output[:, 0, :] = interpolated_activations
             return output
     
-    # Hook to collect activations at subsequent layers
-    def create_collection_hook(hook_name, target_layer):
+    # Hook to collect attention outputs
+    def create_attn_hook(target_layer):
         def hook_fn(module, input, output):
             if isinstance(output, tuple):
-                output = output[0]
+                attn_output = output[0]  # attention_output
+            else:
+                attn_output = output
             
             # Freeze if requested
-            if freeze_attention and hook_name == 'attention':
-                mean_activation = output[:, 0, :].mean(dim=0, keepdim=True)
-                output[:, 0, :] = mean_activation.expand(output.shape[0], -1)
-            elif freeze_mlp and hook_name == 'mlp':
-                mean_activation = output[:, 0, :].mean(dim=0, keepdim=True)
-                output[:, 0, :] = mean_activation.expand(output.shape[0], -1)
+            if freeze_attention:
+                mean_activation = attn_output[:, 0, :].mean(dim=0, keepdim=True)
+                attn_output[:, 0, :] = mean_activation.expand(attn_output.shape[0], -1)
             
-            activations[f'layer{target_layer}_{hook_name}_out'] = output.cpu().clone()
+            # Store CLS token activation [n_steps, hidden_dim]
+            activations[f'layer{target_layer}_attn_out'] = attn_output[:, 0, :].cpu().unsqueeze(1).clone()
+            return output
+        return hook_fn
+    
+    # Hook to collect resid_mid (after attention, before MLP)
+    def create_resid_mid_hook(target_layer):
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                hidden_states = output[0]
+            else:
+                hidden_states = output
+            # Store CLS token activation [n_steps, hidden_dim]
+            activations[f'layer{target_layer}_resid_mid'] = hidden_states[:, 0, :].cpu().unsqueeze(1).clone()
+            return output
+        return hook_fn
+    
+    # Hook to collect MLP intermediate (mlp_post) - output of intermediate layer before activation
+    def create_mlp_post_hook(target_layer):
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                mlp_post = output[0]
+            else:
+                mlp_post = output
+            # Store CLS token activation [n_steps, hidden_dim]
+            activations[f'layer{target_layer}_mlp_post'] = mlp_post[:, 0, :].cpu().unsqueeze(1).clone()
+            return output
+        return hook_fn
+    
+    # Hook to collect MLP outputs
+    def create_mlp_hook(target_layer):
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                mlp_output = output[0]
+            else:
+                mlp_output = output
+            
+            # Freeze if requested
+            if freeze_mlp:
+                mean_activation = mlp_output[:, 0, :].mean(dim=0, keepdim=True)
+                mlp_output[:, 0, :] = mean_activation.expand(mlp_output.shape[0], -1)
+            
+            # Store CLS token activation [n_steps, hidden_dim]
+            activations[f'layer{target_layer}_mlp_out'] = mlp_output[:, 0, :].cpu().unsqueeze(1).clone()
+            return output
+        return hook_fn
+    
+    # Hook to collect resid_post (after MLP, final layer output)
+    def create_resid_post_hook(target_layer):
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                hidden_states = output[0]
+            else:
+                hidden_states = output
+            # Store CLS token activation [n_steps, hidden_dim]
+            activations[f'layer{target_layer}_resid_post'] = hidden_states[:, 0, :].cpu().unsqueeze(1).clone()
+            return output
         return hook_fn
     
     # Register hooks
     hooks = []
     
-    # Injection hook at interpolation layer
+    # Injection hook at interpolation layer - inject the interpolated CLS token activation
     injection_hook = model.vit.encoder.layer[interpolation_layer].register_forward_hook(inject_hook)
     hooks.append(injection_hook)
     
     # Collection hooks for subsequent layers
-    for i in range(interpolation_layer, len(model.vit.encoder.layer)):
+    for i in range(interpolation_layer, n_layers):
         layer = model.vit.encoder.layer[i]
         
         # Hook attention output
-        attn_hook = layer.attention.register_forward_hook(
-            create_collection_hook(i, 'attention')
-        )
-        hooks.append(attn_hook)
+        if hasattr(layer, 'attention') and hasattr(layer.attention, 'output'):
+            attn_hook = layer.attention.output.register_forward_hook(create_attn_hook(i))
+            hooks.append(attn_hook)
+        elif hasattr(layer, 'attention'):
+            # Some ViT models have attention output directly
+            attn_hook = layer.attention.register_forward_hook(create_attn_hook(i))
+            hooks.append(attn_hook)
+        
+        # Hook resid_mid (after attention, before MLP) - this is the layer output after attention
+        # We'll capture it from the layer's intermediate output
+        if hasattr(layer, 'layernorm_after'):
+            resid_mid_hook = layer.layernorm_after.register_forward_hook(create_resid_mid_hook(i))
+            hooks.append(resid_mid_hook)
+        
+        # Hook MLP intermediate (mlp_post) - output of intermediate.dense
+        if hasattr(layer, 'intermediate'):
+            if hasattr(layer.intermediate, 'dense'):
+                mlp_post_hook = layer.intermediate.dense.register_forward_hook(create_mlp_post_hook(i))
+                hooks.append(mlp_post_hook)
         
         # Hook MLP output
-        mlp_hook = layer.output.register_forward_hook(
-            create_collection_hook(i, 'mlp')
-        )
-        hooks.append(mlp_hook)
+        if hasattr(layer, 'output'):
+            mlp_hook = layer.output.register_forward_hook(create_mlp_hook(i))
+            hooks.append(mlp_hook)
+        elif hasattr(layer, 'mlp'):
+            if hasattr(layer.mlp, 'output'):
+                mlp_hook = layer.mlp.output.register_forward_hook(create_mlp_hook(i))
+                hooks.append(mlp_hook)
+            else:
+                mlp_hook = layer.mlp.register_forward_hook(create_mlp_hook(i))
+                hooks.append(mlp_hook)
         
-        # Hook layer output (residual)
-        layer_hook = layer.register_forward_hook(
-            create_collection_hook(i, 'resid_post')
-        )
+        # Hook layer output (resid_post) - final output of the layer
+        layer_hook = layer.register_forward_hook(create_resid_post_hook(i))
         hooks.append(layer_hook)
     
     # Create batched inputs by repeating the image inputs
-    image = Image.open(requests.get(shared_image, stream=True).raw)
-    inputs = processor(images=image, return_tensors="pt").to(device)
-    batched_inputs = {k: v.repeat(n_steps, 1, 1, 1) if v.dim() == 4 else v.repeat(n_steps, 1)
+
+    image_similar1 = Image.open(requests.get(shared_images['similar1'], stream=True).raw)
+    image_similar2 = Image.open(requests.get(shared_images['similar2'], stream=True).raw)
+    image_distinct = Image.open(requests.get(shared_images['distinct'], stream=True).raw)
+
+    # limitation: linear interpolation. Better synthesis should be used.
+
+    inputs_similar1 = processor(images=image_similar1, return_tensors="pt").to(device)
+    inputs_similar2 = processor(images=image_similar2, return_tensors="pt").to(device)
+    inputs_distinct = processor(images=image_distinct, return_tensors="pt").to(device)
+
+    # average of similar1, similar2, and distinct
+    pixel_avg = (inputs_similar1['pixel_values'] + inputs_similar2['pixel_values'] + inputs_distinct['pixel_values']) / 3.0
+    inputs = {'pixel_values': pixel_avg}
+
+    batched_inputs = {k: v.repeat(n_steps, 1, 1, 1) if len(v.shape) == 4 else v.repeat(n_steps, 1) if len(v.shape) == 2 else v.repeat(n_steps)
                      for k, v in inputs.items()}
     
     # Forward pass
@@ -325,7 +422,7 @@ def interpolate_vit_layer(
         hook.remove()
     
     # Clean up
-    del interpolated_activations, logits
+    del interpolated_activations, logits, inputs_similar1, inputs_similar2, inputs_distinct, inputs, batched_inputs, pixel_avg
     torch.cuda.empty_cache()
     
     return activations
@@ -371,7 +468,7 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = load_model(MODEL_NAME)
     model = model.to(device)
-    n_layers = model.cfg.n_layers
+    n_layers = get_n_layers_from_model(model)
     print(f"Loaded {n_layers}-layer model on {device}")
 
     output_dir = f"./activations/{MODEL_NAME}"
@@ -405,7 +502,7 @@ def main():
         PAIRS_IDS = PAIRS
 
     elif args.data_type == 'image':
-        SHARED_IMAGE = config["image"]["shared_image"]
+        SHARED_IMAGES = config["image"]["shared_images"]
         PAIRS = config['image']['image_pairs']
         processor = ViTImageProcessor.from_pretrained(MODEL_NAME)
         params_collect = {
@@ -417,7 +514,7 @@ def main():
         params_interpolate = {
             'model': model,
             'processor': processor,
-            'shared_image': SHARED_IMAGE,
+            'shared_images': SHARED_IMAGES,
             'resid_post_a': None,
             'resid_post_b': None,
             'interpolation_layer': None,
@@ -450,7 +547,11 @@ def main():
             freeze_suffix = "_freeze_mlp"
 
         if args.interpolate_only_first_layer:
-            pbar = tqdm([0], desc=f"Interpolating {pair}{freeze_suffix}")
+            if args.model_type == 'vit':
+                layer_to_interpolate = 1  # ViT's CLS token is initialized the same for layer 0. Therefore, interpolating between two IDENTICAL CLS tokens at layer 0 is meaningless.
+            else:
+                layer_to_interpolate = 0
+            pbar = tqdm([layer_to_interpolate], desc=f"Interpolating {pair}{freeze_suffix}")
         else:
             pbar = tqdm(range(n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
 

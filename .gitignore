@@ -7,6 +7,9 @@ plots/
 # .ipynb for Commands
 main.ipynb
 
+# test file
+test.py
+
 # Python cache
 __pycache__/
 *.pyc

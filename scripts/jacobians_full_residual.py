@@ -11,7 +11,7 @@ from tqdm import tqdm
 import sys
 import argparse
 sys.path.append('./scripts')
-from utils import load_model, load_config, load_activations, generate_interpolation_results_plot
+from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -37,7 +37,8 @@ def compute_jacobian_full_residual(model, resid_post_interpolated: torch.Tensor,
         full_resid = torch.cat([context, last_token_resid.unsqueeze(0)], dim=0)
 
         activation = full_resid.unsqueeze(0)
-        for layer_idx in range(model.cfg.n_layers):
+        n_layers = get_n_layers_from_model(model)
+        for layer_idx in range(n_layers):
             activation = model.blocks[layer_idx](activation)
         return activation[0, -1, :]
 
@@ -74,7 +75,14 @@ def main():
 
     model = load_model(MODEL_NAME)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    n_layers = model.cfg.n_layers
+    
+    # Check if this is a ViT model (jacobian computation not yet supported)
+    if args.model_type == 'vit':
+        print("ERROR: Jacobian computation for ViT models is not yet implemented.")
+        print("This script currently only supports HookedTransformer models.")
+        return
+    
+    n_layers = get_n_layers_from_model(model)
     print(f"Loaded {n_layers}-layer model on {device}")
 
     os.makedirs(f"./plots/{MODEL_NAME}", exist_ok=True)

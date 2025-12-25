@@ -39,13 +39,12 @@ def compute_step_sizes_vit(activations: Dict[str, torch.Tensor], hook_name: str)
 
     for key, layer_activations in activations.items():
         if key.startswith('layer') and key.endswith(f'_{hook_name}'):
-            last_token = layer_activations[:, 0, :]  # [n_steps, hidden_dim]
-            step_diffs = last_token[1:] - last_token[:-1]  # [n_steps-1, hidden_dim]
+            cls_token = layer_activations[:, 0, :]  # [n_steps, hidden_dim]
+            step_diffs = cls_token[1:] - cls_token[:-1]  # [n_steps-1, hidden_dim]
             step_norms = torch.norm(step_diffs, p=2, dim=1)  # [n_steps-1]
 
             layer_idx = int(key.split('_')[0].replace('layer', ''))
             step_sizes[f"Layer {layer_idx}"] = step_norms
-
     return step_sizes
 
 

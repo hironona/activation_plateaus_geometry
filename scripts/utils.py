@@ -97,13 +97,13 @@ def load_vit_regular(model_name):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     actual_model_name = model_name
-    model = ViTForImageClassification.from_pretrained(actual_model_name, fold_ln=False, center_unembed=False).to(device)
+    model = ViTForImageClassification.from_pretrained(actual_model_name).to(device)
     processor = ViTImageProcessor.from_pretrained(actual_model_name)
 
     return model, processor, device, model_name
 
 def load_model(model_name):
-    """Load either regular, no-LayerNorm GPT-2, or OPT model."""
+    """Load either regular, no-LayerNorm GPT-2, or ViT model."""
     if 'LNFree' in model_name:
         model, tokenizer, device, actual_name = load_gpt2_no_ln(model_name)
     elif "gpt2" in model_name:
@@ -116,6 +116,17 @@ def load_model(model_name):
     # Store the original model name for saving
     model.original_model_name = model_name
     return model
+
+def get_n_layers_from_model(model):
+    """Get number of layers from a model, handling both HookedTransformer and ViT models."""
+    if hasattr(model, 'cfg') and hasattr(model.cfg, 'n_layers'):
+        # HookedTransformer model
+        return model.cfg.n_layers
+    elif hasattr(model, 'vit') and hasattr(model.vit, 'encoder') and hasattr(model.vit.encoder, 'layer'):
+        # ViT model
+        return len(model.vit.encoder.layer)
+    else:
+        raise ValueError(f"Cannot determine number of layers for model type: {type(model)}")
 
 def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     """
@@ -203,7 +214,11 @@ def compute_relative_distances(activations: torch.Tensor) -> List[float]:
         current = activations_flat[step_idx]
         dist_to_a = torch.norm(current - endpoint_a).item()
         dist_to_b = torch.norm(current - endpoint_b).item()
-        relative_distances.append(dist_to_a / (dist_to_a + dist_to_b))
+        if dist_to_a + dist_to_b == 0:
+            result = 0.0  # Avoid division by zero; both endpoints are the same
+        else:  
+            result = dist_to_a / (dist_to_a + dist_to_b)
+        relative_distances.append(result)
 
     return relative_distances
 

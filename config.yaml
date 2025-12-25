@@ -14,14 +14,17 @@ text:
     - ["big", "large"]
 
 image:
-  shared_image: "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg"
+  shared_images: 
+    similar1: "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg"  # cat
+    similar2: "https://farm3.staticflickr.com/2335/2406707284_04264023a9_z.jpg" # another cat
+    distinct: "https://farm8.staticflickr.com/7028/6656578667_9011675967_z.jpg"  # dog
   image_pairs:
     - [
         "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg",  # cat
         "https://farm8.staticflickr.com/7028/6656578667_9011675967_z.jpg" # dog
       ]
     - [
-        "https://farm4.staticflickr.com/3280/3204622086_bee54dfb59_z.jpg",  # cat
+        "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg",  # cat
         "https://farm3.staticflickr.com/2335/2406707284_04264023a9_z.jpg" # another cat
       ]
   shared_image_id: "cat1_coco"

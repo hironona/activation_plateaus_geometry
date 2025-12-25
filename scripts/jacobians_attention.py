@@ -11,7 +11,7 @@ from tqdm import tqdm
 import sys
 import argparse
 sys.path.append('./scripts')
-from utils import load_model, load_config, load_activations, generate_interpolation_results_plot
+from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -84,7 +84,14 @@ def main():
 
     model = load_model(MODEL_NAME)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    n_layers = model.cfg.n_layers
+    
+    # Check if this is a ViT model (jacobian computation not yet supported)
+    if args.model_type == 'vit':
+        print("ERROR: Jacobian computation for ViT models is not yet implemented.")
+        print("This script currently only supports HookedTransformer models.")
+        return
+    
+    n_layers = get_n_layers_from_model(model)
     print(f"Loaded {n_layers}-layer model on {device}")
 
     os.makedirs(f"./plots/{MODEL_NAME}", exist_ok=True)
