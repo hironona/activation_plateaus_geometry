@@ -1,10 +1,10 @@
 # Configuration for paper_analyses_v2 project
 
-n_steps: 50
+n_steps: 20
 
 model_names:
   hooked_transformer: "gpt2-large"
-  vit: "google/vit-base-patch16-224"
+  vit: "facebook/dinov2-large"
   resnet: "resnet50"
 
 text: 
@@ -14,23 +14,27 @@ text:
     - ["big", "large"]
 
 image:
-  shared_images: 
-    similar1: "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg"  # cat
-    similar2: "https://farm3.staticflickr.com/2335/2406707284_04264023a9_z.jpg" # another cat
-    distinct: "https://farm8.staticflickr.com/7028/6656578667_9011675967_z.jpg"  # dog
+  # https://cocodataset.org/#explore?id=114269
+  # https://cocodataset.org/#explore?id=434958
+  shared_image: https://farm6.staticflickr.com/5216/5423157110_0e78ccd4c7_z.jpg # cat and human
   image_pairs:
     - [
-        "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg",  # cat
-        "https://farm8.staticflickr.com/7028/6656578667_9011675967_z.jpg" # dog
+        # https://cocodataset.org/#explore?id=151497
+        "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
+        "https://farm7.staticflickr.com/6039/5910257452_615e5114a6_z.jpg" # human
+        # https://cocodataset.org/#explore?id=305358
+        # https://cocodataset.org/#explore?id=93816
       ]
     - [
-        "https://farm4.staticflickr.com/3385/3204622086_bee54dfb59_z.jpg",  # cat
-        "https://farm3.staticflickr.com/2335/2406707284_04264023a9_z.jpg" # another cat
+        # https://cocodataset.org/#explore?id=151497
+        "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
+        "https://farm1.staticflickr.com/3112/2770481931_159398e7ef_z.jpg" # another cat
+        # https://cocodataset.org/#explore?id=221966
       ]
-  shared_image_id: "cat1_coco"
+  shared_image_id: "cat_human_434958"
   pairs_ids:
-    - ["cat1_coco", "dog1_coco"]
-    - ["cat1_coco", "cat2_coco"]
+    - ["cat_151497", "human_305358"]
+    - ["cat_151497", "cat_221966"]
   
 
 

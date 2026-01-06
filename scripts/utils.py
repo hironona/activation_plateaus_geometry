@@ -10,7 +10,7 @@ import os
 import yaml
 from transformer_lens import HookedTransformer
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from transformers import ViTImageProcessor, ViTForImageClassification
+from transformers import AutoImageProcessor, AutoModel
 from typing import List, Dict, Union
 
 # Dictionary of no-LayerNorm models with standardized names
@@ -97,8 +97,18 @@ def load_vit_regular(model_name):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     actual_model_name = model_name
-    model = ViTForImageClassification.from_pretrained(actual_model_name).to(device)
-    processor = ViTImageProcessor.from_pretrained(actual_model_name)
+    model = AutoModel.from_pretrained(actual_model_name).to(device)
+    processor = AutoImageProcessor.from_pretrained(actual_model_name)
+
+    return model, processor, device, model_name
+
+def load_resnet(model_name):
+    """Load ResNet."""
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    actual_model_name = model_name
+    model = AutoModel.from_pretrained(actual_model_name).to(device)
+    processor = AutoImageProcessor.from_pretrained(actual_model_name)
 
     return model, processor, device, model_name
 
@@ -108,8 +118,10 @@ def load_model(model_name):
         model, tokenizer, device, actual_name = load_gpt2_no_ln(model_name)
     elif "gpt2" in model_name:
         model, tokenizer, device, actual_name = load_gpt2_regular(model_name)
-    elif "vit" in model_name:
+    elif "vit" in model_name or "dino" in model_name:
         model, processor, device, actual_name = load_vit_regular(model_name)
+    elif "resnet" in model_name:
+        model, processor, device, actual_name = load_resnet(model_name)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     
@@ -125,7 +137,14 @@ def get_n_layers_from_model(model):
     elif hasattr(model, 'vit') and hasattr(model.vit, 'encoder') and hasattr(model.vit.encoder, 'layer'):
         # ViT model
         return len(model.vit.encoder.layer)
+    elif hasattr(model, 'resnet'):
+        # ResNet
+        return len(model.resnet.encoder.stages)
+    elif hasattr(model, 'encoder') and hasattr(model.encoder, 'layer'):
+        # Some other transformer models
+        return len(model.encoder.layer)
     else:
+        print(model.__class__)
         raise ValueError(f"Cannot determine number of layers for model type: {type(model)}")
 
 def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
@@ -155,7 +174,6 @@ def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     # Rescale to linearly interpolated norm
     target_norm = (1 - t) * norm_v0 + t * norm_v1
     return slerp_result * target_norm
-
 
 def construct_filepath(model_name: str, shared_id: str, interpolation_layer: int, pair_ids: List[str], n_steps: int, freeze_suffix: str = "") -> str:
     """Construct full filepath for activation file.

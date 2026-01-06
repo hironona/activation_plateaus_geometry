@@ -17,9 +17,11 @@ import argparse
 from typing import Dict
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
-from transformers import ViTImageProcessor, ViTForImageClassification
+from transformers import AutoImageProcessor, ViTForImageClassification
+from transformers import ResNetForImageClassification
 from PIL import Image
 import requests
+from io import BytesIO
 import sys
 sys.path.append('./scripts')
 from utils import load_model, load_config, slerp_rescale, construct_filepath, get_n_layers_from_model
@@ -36,7 +38,9 @@ ACTIVATION_HOOKS = [
     ('resid_post', 'blocks.{}.hook_resid_post'),
 ]
 
-#TODO: create separate hooking functions, both for collecting and interpolating, for different model types
+#TODO: create util func to get layers from ViT
+#TODO: create util func to load image from url
+
 
 def collect_original_activations_hooked_transformer(model: HookedTransformer, shared_context: str, variable_data: str, device: str) -> Dict[str, torch.Tensor]:
     """
@@ -63,28 +67,25 @@ def collect_original_activations_hooked_transformer(model: HookedTransformer, sh
 
     return activations
 
-def collect_original_activations_vit(model: ViTForImageClassification, processor: ViTImageProcessor, variable_data: str, device: str) -> Dict[str, torch.Tensor]:
+def collect_original_activations_vit(model: ViTForImageClassification, processor: AutoImageProcessor, variable_data: str, device: str) -> Dict[str, torch.Tensor]:
     """
-    Collect resid_post activations at all layers for the CLS token of the given image.
+    Collect resid_post activations of all patch tokens at all layers.
 
     Returns dict with keys like 'layer{i}_resid_post' -> tensor of shape [1, hidden_dim]
     """
-
     image = Image.open(requests.get(variable_data, stream=True).raw)
     inputs = processor(images=image, return_tensors="pt").to(device)
 
     activations = {}
 
     def create_collection_hook(layer_idx):
-        """Create hook to collect CLS token activation at each layer."""
+        """Create hook to collect all patch token activations at each layer."""
         def hook_fn(module, input, output):
             # For ViT, output is typically (batch_size, num_patches + 1, hidden_dim)
-            # We take the CLS token (first token) activation
+            # We take the non-CLS tokens (all tokens except the first) activation
             if isinstance(output, tuple):
                 output = output[0]
-            # output shape: [batch_size, seq_len, hidden_dim]
-            # CLS token is at index 0
-            activations[f'layer{layer_idx}_resid_post'] = output[:, 0, :].cpu().clone()
+            activations[f'layer{layer_idx}_resid_post'] = output[:, 1:, :].cpu().clone()
         return hook_fn
 
     hooks = []
@@ -96,13 +97,49 @@ def collect_original_activations_vit(model: ViTForImageClassification, processor
     with torch.no_grad():
         _ = model(**inputs)
     
-    # Clean up
-    del inputs
+    del inputs, _
     torch.cuda.empty_cache() if device == 'cuda' else None
 
     # Remove hooks
     for hook in hooks:
         hook.remove()
+
+    return activations
+
+def collect_original_activations_resnet(model: ResNetForImageClassification, processor: AutoImageProcessor, variable_data: str, device: str) -> Dict[str, torch.Tensor]:
+    """
+    Collect resid_post activations from ResNet layers.
+    For ResNet, we collect spatial-pooled features since ResNet outputs are feature maps.
+
+    Returns dict with keys like 'layer{i}_resid_post' -> tensor of shape [1, channels, height, width]
+    """
+    try:
+        response = requests.get(variable_data, stream=True, timeout=10)
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content))
+    except Exception as e:
+        raise ValueError(f"Failed to load image from {variable_data}: {str(e)}")
+    
+    inputs = processor(images=image, return_tensors="pt").to(device)
+
+    activations = {}
+
+    # Forward pass
+    with torch.no_grad():
+        outputs = model(**inputs, output_hidden_states=True)
+        
+        if not hasattr(outputs, 'hidden_states') or outputs.hidden_states is None:
+            raise ValueError("Model output does not contain hidden_states. Ensure output_hidden_states=True is supported.")
+        
+        layer_ids = list(range(len(outputs.hidden_states)))    # outputs.hidden_states is a tuple of all layer outputs
+        
+        for idx in layer_ids:
+            activations[f'layer{idx}_resid_post'] = outputs.hidden_states[idx].cpu().clone()
+        
+    # Clean up
+    del inputs, outputs
+    if device == 'cuda':
+        torch.cuda.empty_cache()
 
     return activations
 
@@ -117,7 +154,7 @@ def collect_original_activations_wrapper(model_type: str, **kwargs) -> Dict[str,
     :rtype: Dict[str, torch.Tensor]
     :raises ValueError: If model_type is not supported
     """
-    if model_type not in ['hooked_transformer', 'vit']:
+    if model_type not in ['hooked_transformer', 'vit', 'resnet']:
         raise ValueError(f"Unsupported model type: {model_type}")
     
     if model_type == 'hooked_transformer':
@@ -125,6 +162,9 @@ def collect_original_activations_wrapper(model_type: str, **kwargs) -> Dict[str,
     
     if model_type == 'vit':
         return collect_original_activations_vit(**kwargs)
+    
+    if model_type == 'resnet':
+        return collect_original_activations_resnet(**kwargs)
     
 def interpolate_resid_post_layer(
     model: HookedTransformer,
@@ -210,7 +250,7 @@ def interpolate_resid_post_layer(
 def interpolate_vit_layer(
     model,
     processor,
-    shared_images: Dict[str, str], # urls_to_images
+    shared_image: str, # url_to_image
     resid_post_a: Dict[str, torch.Tensor],
     resid_post_b: Dict[str, torch.Tensor],
     interpolation_layer: int,
@@ -221,7 +261,7 @@ def interpolate_vit_layer(
 ) -> Dict[str, torch.Tensor]:
     """
     Interpolate at specified layer in ViT and record all downstream activations.
-    Interpolates only the CLS token activation.
+    Interpolates non-CLS token activations but collect only CLS token activations.
     
     Args:
         model: ViT model
@@ -238,14 +278,11 @@ def interpolate_vit_layer(
         Dict with keys like 'layer{i}_output' -> tensors of shape [n_steps, hidden_dim]
         and 'logits' -> tensor of shape [n_steps, num_classes]
     """
-    if 'similar1' not in shared_images or 'similar2' not in shared_images or 'distinct' not in shared_images:
-        raise ValueError("shared_images must contain 'similar1', 'similar2', and 'distinct' keys with image URLs.")
     
     n_layers = get_n_layers_from_model(model)
     # Get activations at interpolation layer for both images
-    resid_a = resid_post_a[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]
-    resid_b = resid_post_b[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]
-    assert not (1e-5 < (resid_a - resid_b).sum() < 1e-5), "Resid_post activations for both images are identical."
+    resid_a = resid_post_a[f'layer{interpolation_layer}_resid_post']  # [1, 216, hidden_dim]    
+    resid_b = resid_post_b[f'layer{interpolation_layer}_resid_post']  # [1, 216, hidden_dim]
     
     # Compute SLERP interpolations
     resid_a_device = resid_a.to(device)
@@ -257,18 +294,18 @@ def interpolate_vit_layer(
         for alpha in alphas
     ])  # [n_steps, hidden_dim]
     
-    # Storage for collected activations (keep device copy for injection)
+    # Storage for collected activations
     activations = {f'layer{interpolation_layer}_resid_post': interpolated_activations.cpu().clone()}
     
-    # Hook to inject interpolated activations at the interpolation layer
+    # Hook to inject interpolated activations
     def inject_hook(module, input, output):
         if isinstance(output, tuple):
             output = list(output)
-            # Replace CLS token with interpolated values
-            output[0][:, 0, :] = interpolated_activations
+            # Replace non-CLS tokens with interpolated values
+            output[0][:, 1:, :] = interpolated_activations
             return tuple(output)
         else:
-            output[:, 0, :] = interpolated_activations
+            output[:, 1:, :] = interpolated_activations
             return output
     
     # Hook to collect attention outputs
@@ -343,16 +380,25 @@ def interpolate_vit_layer(
             return output
         return hook_fn
     
+    # get layers
+    layers = []
+    if hasattr(model, 'vit'):
+        layers = model.vit.encoder.layer
+    elif hasattr(model, 'encoder'):
+        layers = model.encoder.layer
+    else:
+        raise ValueError("Model does not have recognizable transformer layers for ViT.")
+    
     # Register hooks
     hooks = []
     
     # Injection hook at interpolation layer - inject the interpolated CLS token activation
-    injection_hook = model.vit.encoder.layer[interpolation_layer].register_forward_hook(inject_hook)
+    injection_hook = layers[interpolation_layer].register_forward_hook(inject_hook)
     hooks.append(injection_hook)
     
     # Collection hooks for subsequent layers
     for i in range(interpolation_layer, n_layers):
-        layer = model.vit.encoder.layer[i]
+        layer = layers[i]
         
         # Hook attention output
         if hasattr(layer, 'attention') and hasattr(layer.attention, 'output'):
@@ -392,20 +438,8 @@ def interpolate_vit_layer(
         hooks.append(layer_hook)
     
     # Create batched inputs by repeating the image inputs
-
-    image_similar1 = Image.open(requests.get(shared_images['similar1'], stream=True).raw)
-    image_similar2 = Image.open(requests.get(shared_images['similar2'], stream=True).raw)
-    image_distinct = Image.open(requests.get(shared_images['distinct'], stream=True).raw)
-
-    # limitation: linear interpolation. Better synthesis should be used.
-
-    inputs_similar1 = processor(images=image_similar1, return_tensors="pt").to(device)
-    inputs_similar2 = processor(images=image_similar2, return_tensors="pt").to(device)
-    inputs_distinct = processor(images=image_distinct, return_tensors="pt").to(device)
-
-    # average of similar1, similar2, and distinct
-    pixel_avg = (inputs_similar1['pixel_values'] + inputs_similar2['pixel_values'] + inputs_distinct['pixel_values']) / 3.0
-    inputs = {'pixel_values': pixel_avg}
+    image = Image.open(requests.get(shared_image, stream=True).raw)
+    inputs = processor(images=image, return_tensors="pt").to(device)
 
     batched_inputs = {k: v.repeat(n_steps, 1, 1, 1) if len(v.shape) == 4 else v.repeat(n_steps, 1) if len(v.shape) == 2 else v.repeat(n_steps)
                      for k, v in inputs.items()}
@@ -413,7 +447,10 @@ def interpolate_vit_layer(
     # Forward pass
     with torch.no_grad():
         outputs = model(**batched_inputs)
-        logits = outputs.logits
+        if hasattr(outputs, 'logits'):
+            logits = outputs.logits
+        else:
+            logits = outputs.last_hidden_state  # Fallback
     
     activations['logits'] = logits.cpu().clone()
     
@@ -422,9 +459,150 @@ def interpolate_vit_layer(
         hook.remove()
     
     # Clean up
-    del interpolated_activations, logits, inputs_similar1, inputs_similar2, inputs_distinct, inputs, batched_inputs, pixel_avg
+    del interpolated_activations, logits, inputs, batched_inputs
     torch.cuda.empty_cache()
     
+    return activations
+
+def slerp_resnet(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) -> torch.Tensor:
+    """
+    SLERP wrapper for ResNet feature maps.
+    Treats the entire feature map as a single vector and performs spherical linear interpolation.
+    
+    Args:
+        v0: First feature map [1, C, H, W]
+        v1: Second feature map [1, C, H, W]
+        n_steps: Number of interpolation steps
+        device: Device to perform computation on
+    
+    Returns:
+        Interpolated feature maps [n_steps, C, H, W]
+    """
+    if len(v0.shape) != 4:
+        raise ValueError(f"Expected 4D tensor [1, C, H, W], got shape {v0.shape}")
+    
+    # v0, v1 shape: [1, C, H, W]
+    # Save dimensions
+    bs, c, h, w = v0.shape
+    
+    # Flatten: [1, C*H*W]
+    v0_flat = v0.view(bs, -1).to(device)
+    v1_flat = v1.view(bs, -1).to(device)
+    
+    alphas = torch.linspace(0, 1, n_steps, device=device)
+    
+    # perform SLERP in flattened space
+    # output shape: [n_steps, C*H*W]
+    interpolated_flat = torch.stack([
+        slerp_rescale(v0_flat, v1_flat, alpha.item()).squeeze(0)
+        for alpha in alphas
+    ])
+    
+    # Clean up intermediate tensors
+    del v0_flat, v1_flat, alphas
+    
+    # Reshape back to original shape: [n_steps, C, H, W]
+    return interpolated_flat.view(n_steps, c, h, w)
+
+def interpolate_resnet_layer(
+    model: ResNetForImageClassification,
+    processor: AutoImageProcessor,
+    shared_image: str,
+    resid_post_a: Dict[str, torch.Tensor],
+    resid_post_b: Dict[str, torch.Tensor],
+    interpolation_layer: int,
+    n_steps: int,
+    device: str,
+    freeze_attention: bool = False, # unnecessary for ResNet
+    freeze_mlp: bool = False        # unnecessary for ResNet
+) -> Dict[str, torch.Tensor]:
+    """
+    Interpolate resid_post at specified stage and record all downstream activations.
+
+    Returns dict with keys like 'layer{i}_{hook_name}' -> tensors of shape [n_steps, C, H, W]
+    and 'logits' -> tensor of shape [n_steps, num_classes]
+    """
+    
+    # Access ResNet model components with better error handling
+    if hasattr(model, 'resnet'):
+        resnet = model.resnet
+    else:
+        resnet = model
+    
+    # Build list of modules - handle different ResNet structures
+    modules_list = [resnet.embedder] + resnet.encoder.stages
+    
+    n_layers = len(modules_list)
+    
+    if interpolation_layer >= n_layers:
+        raise ValueError(f"Interpolation layer {interpolation_layer} is out of bounds for ResNet (max {n_layers-1}).")
+
+    key = f'layer{interpolation_layer}_resid_post'
+    
+    resid_a = resid_post_a[key]
+    resid_b = resid_post_b[key]
+    
+    # SLERP for ResNet (Flatten -> SLERP -> Reshape)
+    interpolated_activations = slerp_resnet(resid_a, resid_b, n_steps, device)  # (n_steps, C, H, W)
+    
+    # Ensure interpolated activations are on device for injection
+    interpolated_activations_device = interpolated_activations.to(device)
+    
+    # Dictionary to store results (store injected layer values on CPU)
+    activations = {key: interpolated_activations.cpu().clone()}
+    
+    # Injection Hook
+    def inject_hook(module, input, output):
+        # output shape: (batch, C, H, W)
+        # interpolated_activations_device shape: [n_steps, C, H, W]
+        # Overwrite for batch size (input is repeated n_steps times)
+        return interpolated_activations_device
+
+    # Collection Hook
+    def create_collection_hook(target_layer_idx):
+        def hook_fn(module, input, output):
+            activations[f'layer{target_layer_idx}_resid_post'] = output.cpu().clone()
+            return output
+        return hook_fn
+
+    hooks = []
+    
+    target_module = modules_list[interpolation_layer]
+    hooks.append(target_module.register_forward_hook(inject_hook))
+    
+    # Register collection hooks for downstream layers
+    for i in range(interpolation_layer + 1, n_layers):
+        hooks.append(modules_list[i].register_forward_hook(create_collection_hook(i)))
+
+    # Dummy input image
+    if shared_image:
+        response = requests.get(shared_image, stream=True, timeout=10)
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content))
+    else:
+        # fallback if shared_image is not provided (e.g., random noise image)
+        image = Image.new('RGB', (224, 224))
+        
+    inputs = processor(images=image, return_tensors="pt").to(device)
+    
+    # expand batch size to n_steps
+    batched_inputs = {
+        k: v.repeat(n_steps, 1, 1, 1) if v.ndim == 4 else v.repeat(n_steps) if v.ndim > 0 else v
+        for k, v in inputs.items()
+    }
+
+    with torch.no_grad():
+        outputs = model(**batched_inputs)
+        
+    activations['logits'] = outputs.logits.cpu().clone()
+
+    for hook in hooks:
+        hook.remove()
+    
+    # Clean up
+    del interpolated_activations, interpolated_activations_device, batched_inputs, inputs
+    torch.cuda.empty_cache()
+
     return activations
 
 def interpolate_layer_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tensor]:
@@ -438,7 +616,7 @@ def interpolate_layer_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tens
     :rtype: Dict[str, torch.Tensor]
     :raises ValueError: If model_type is not supported
     """
-    if model_type not in ['hooked_transformer', 'vit']:
+    if model_type not in ['hooked_transformer', 'vit', 'resnet']:
         raise ValueError(f"Unsupported model type: {model_type}")
     
     if model_type == 'hooked_transformer':
@@ -446,6 +624,9 @@ def interpolate_layer_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tens
     
     if model_type == 'vit':
         return interpolate_vit_layer(**kwargs)
+    
+    if model_type == 'resnet':
+        return interpolate_resnet_layer(**kwargs)
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
@@ -476,6 +657,7 @@ def main():
 
     # configure parameters in advance for convenience
     model_type = args.model_type
+
     if args.data_type == 'text':
         SHARED_CONTEXT = config['text']['shared_context']
         PAIRS = config['text']['token_pairs']
@@ -493,8 +675,8 @@ def main():
             'interpolation_layer': None,
             'n_steps': N_STEPS,
             'device': device,
-            'freeze_attention': False,
-            'freeze_mlp': False,
+            'freeze_attention': args.freeze_attention,
+            'freeze_mlp': args.freeze_mlp,
         }
 
         # for path construction
@@ -502,9 +684,9 @@ def main():
         PAIRS_IDS = PAIRS
 
     elif args.data_type == 'image':
-        SHARED_IMAGES = config["image"]["shared_images"]
+        SHARED_IMAGE = config["image"]["shared_image"]
         PAIRS = config['image']['image_pairs']
-        processor = ViTImageProcessor.from_pretrained(MODEL_NAME)
+        processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
         params_collect = {
             'model': model,
             'processor': processor,
@@ -514,14 +696,14 @@ def main():
         params_interpolate = {
             'model': model,
             'processor': processor,
-            'shared_images': SHARED_IMAGES,
+            'shared_image': SHARED_IMAGE,
             'resid_post_a': None,
             'resid_post_b': None,
             'interpolation_layer': None,
             'n_steps': N_STEPS,
             'device': device,
-            'freeze_attention': False,
-            'freeze_mlp': False,
+            'freeze_attention': args.freeze_attention,
+            'freeze_mlp': args.freeze_mlp,
         }
 
         # for path construction
