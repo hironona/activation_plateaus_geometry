@@ -24,7 +24,7 @@ import requests
 from io import BytesIO
 import sys
 sys.path.append('./scripts')
-from utils import load_model, load_config, slerp_rescale, construct_filepath, get_n_layers_from_model
+from utils import load_model, load_config, load_image, slerp_rescale, linear_rescale, construct_filepath, get_n_layers_from_model
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -73,7 +73,7 @@ def collect_original_activations_vit(model: ViTForImageClassification, processor
 
     Returns dict with keys like 'layer{i}_resid_post' -> tensor of shape [1, hidden_dim]
     """
-    image = Image.open(requests.get(variable_data, stream=True).raw)
+    image = load_image(variable_data)
     inputs = processor(images=image, return_tensors="pt").to(device)
 
     activations = {}
@@ -85,11 +85,17 @@ def collect_original_activations_vit(model: ViTForImageClassification, processor
             # We take the non-CLS tokens (all tokens except the first) activation
             if isinstance(output, tuple):
                 output = output[0]
-            activations[f'layer{layer_idx}_resid_post'] = output[:, 1:, :].cpu().clone()
+            activations[f'layer{layer_idx}_resid_post'] = output[:, :, :].cpu().clone()
         return hook_fn
 
     hooks = []
-    for i, layer in enumerate(model.vit.encoder.layer):
+
+    if hasattr(model, 'vit'):
+        layers = model.vit.encoder.layer
+    else:
+        layers = model.encoder.layer
+
+    for i, layer in enumerate(layers):
         hook = layer.register_forward_hook(create_collection_hook(i))
         hooks.append(hook)
 
@@ -113,12 +119,7 @@ def collect_original_activations_resnet(model: ResNetForImageClassification, pro
 
     Returns dict with keys like 'layer{i}_resid_post' -> tensor of shape [1, channels, height, width]
     """
-    try:
-        response = requests.get(variable_data, stream=True, timeout=10)
-        response.raise_for_status()
-        image = Image.open(BytesIO(response.content))
-    except Exception as e:
-        raise ValueError(f"Failed to load image from {variable_data}: {str(e)}")
+    image = load_image(variable_data)
     
     inputs = processor(images=image, return_tensors="pt").to(device)
 
@@ -127,19 +128,15 @@ def collect_original_activations_resnet(model: ResNetForImageClassification, pro
     # Forward pass
     with torch.no_grad():
         outputs = model(**inputs, output_hidden_states=True)
-        
-        if not hasattr(outputs, 'hidden_states') or outputs.hidden_states is None:
-            raise ValueError("Model output does not contain hidden_states. Ensure output_hidden_states=True is supported.")
-        
-        layer_ids = list(range(len(outputs.hidden_states)))    # outputs.hidden_states is a tuple of all layer outputs
-        
-        for idx in layer_ids:
-            activations[f'layer{idx}_resid_post'] = outputs.hidden_states[idx].cpu().clone()
+    
+    layer_ids = list(range(len(outputs.hidden_states)))    # outputs.hidden_states is a tuple of all layer outputs
+    
+    for idx in layer_ids:
+        activations[f'layer{idx}_resid_post'] = outputs.hidden_states[idx].cpu().clone()
         
     # Clean up
     del inputs, outputs
-    if device == 'cuda':
-        torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
 
     return activations
 
@@ -302,10 +299,10 @@ def interpolate_vit_layer(
         if isinstance(output, tuple):
             output = list(output)
             # Replace non-CLS tokens with interpolated values
-            output[0][:, 1:, :] = interpolated_activations
+            output[0][:, :, :] = interpolated_activations
             return tuple(output)
         else:
-            output[:, 1:, :] = interpolated_activations
+            output[:, :, :] = interpolated_activations
             return output
     
     # Hook to collect attention outputs
@@ -318,8 +315,8 @@ def interpolate_vit_layer(
             
             # Freeze if requested
             if freeze_attention:
-                mean_activation = attn_output[:, 0, :].mean(dim=0, keepdim=True)
-                attn_output[:, 0, :] = mean_activation.expand(attn_output.shape[0], -1)
+                mean_activation = attn_output[:, :, :].mean(dim=0, keepdim=True)
+                attn_output[:, :, :] = mean_activation.expand(attn_output.shape[0], -1)
             
             # Store CLS token activation [n_steps, hidden_dim]
             activations[f'layer{target_layer}_attn_out'] = attn_output[:, 0, :].cpu().unsqueeze(1).clone()
@@ -360,8 +357,8 @@ def interpolate_vit_layer(
             
             # Freeze if requested
             if freeze_mlp:
-                mean_activation = mlp_output[:, 0, :].mean(dim=0, keepdim=True)
-                mlp_output[:, 0, :] = mean_activation.expand(mlp_output.shape[0], -1)
+                mean_activation = mlp_output[:, :, :].mean(dim=0, keepdim=True)
+                mlp_output[:, :, :] = mean_activation.expand(mlp_output.shape[0], -1)
             
             # Store CLS token activation [n_steps, hidden_dim]
             activations[f'layer{target_layer}_mlp_out'] = mlp_output[:, 0, :].cpu().unsqueeze(1).clone()
@@ -438,7 +435,7 @@ def interpolate_vit_layer(
         hooks.append(layer_hook)
     
     # Create batched inputs by repeating the image inputs
-    image = Image.open(requests.get(shared_image, stream=True).raw)
+    image = load_image(shared_image)
     inputs = processor(images=image, return_tensors="pt").to(device)
 
     batched_inputs = {k: v.repeat(n_steps, 1, 1, 1) if len(v.shape) == 4 else v.repeat(n_steps, 1) if len(v.shape) == 2 else v.repeat(n_steps)
@@ -504,6 +501,46 @@ def slerp_resnet(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) 
     # Reshape back to original shape: [n_steps, C, H, W]
     return interpolated_flat.view(n_steps, c, h, w)
 
+def lerp_resnet(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) -> torch.Tensor:
+    """
+    Linear interpolation wrapper for ResNet feature maps.
+    Treats the entire feature map as a single vector and performs linear interpolation.
+    
+    Args:
+        v0: First feature map [1, C, H, W]
+        v1: Second feature map [1, C, H, W]
+        n_steps: Number of interpolation steps
+        device: Device to perform computation on
+    
+    Returns:
+        Interpolated feature maps [n_steps, C, H, W]
+    """
+    if len(v0.shape) != 4:
+        raise ValueError(f"Expected 4D tensor [1, C, H, W], got shape {v0.shape}")
+    
+    # v0, v1 shape: [1, C, H, W]
+    # Save dimensions
+    bs, c, h, w = v0.shape
+    
+    # Flatten: [1, C*H*W]
+    v0_flat = v0.view(bs, -1).to(device)
+    v1_flat = v1.view(bs, -1).to(device)
+    
+    alphas = torch.linspace(0, 1, n_steps, device=device)
+    
+    # perform linear interpolation in flattened space
+    # output shape: [n_steps, C*H*W]
+    interpolated_flat = torch.stack([
+        linear_rescale(v0_flat, v1_flat, alpha.item()).squeeze(0)
+        for alpha in alphas
+    ])
+    
+    # Clean up intermediate tensors
+    del v0_flat, v1_flat, alphas
+    
+    # Reshape back to original shape: [n_steps, C, H, W]
+    return interpolated_flat.view(n_steps, c, h, w)
+
 def interpolate_resnet_layer(
     model: ResNetForImageClassification,
     processor: AutoImageProcessor,
@@ -530,7 +567,7 @@ def interpolate_resnet_layer(
         resnet = model
     
     # Build list of modules - handle different ResNet structures
-    modules_list = [resnet.embedder] + resnet.encoder.stages
+    modules_list = [resnet.embedder] + list(resnet.encoder.stages)
     
     n_layers = len(modules_list)
     
@@ -542,7 +579,7 @@ def interpolate_resnet_layer(
     resid_a = resid_post_a[key]
     resid_b = resid_post_b[key]
     
-    # SLERP for ResNet (Flatten -> SLERP -> Reshape)
+    # Spherical interpolation for ResNet (Flatten -> Linear Interpolation -> Reshape)
     interpolated_activations = slerp_resnet(resid_a, resid_b, n_steps, device)  # (n_steps, C, H, W)
     
     # Ensure interpolated activations are on device for injection
@@ -576,9 +613,7 @@ def interpolate_resnet_layer(
 
     # Dummy input image
     if shared_image:
-        response = requests.get(shared_image, stream=True, timeout=10)
-        response.raise_for_status()
-        image = Image.open(BytesIO(response.content))
+        image = load_image(shared_image)
     else:
         # fallback if shared_image is not provided (e.g., random noise image)
         image = Image.new('RGB', (224, 224))

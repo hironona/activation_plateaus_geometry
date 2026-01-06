@@ -5,7 +5,7 @@ n_steps: 20
 model_names:
   hooked_transformer: "gpt2-large"
   vit: "facebook/dinov2-large"
-  resnet: "resnet50"
+  resnet: "microsoft/resnet-101"
 
 text: 
   shared_context: "The house was"
@@ -17,23 +17,31 @@ image:
   # https://cocodataset.org/#explore?id=114269
   # https://cocodataset.org/#explore?id=434958
   shared_image: https://farm6.staticflickr.com/5216/5423157110_0e78ccd4c7_z.jpg # cat and human
+  # image_pairs:
+  #   - [
+  #       # https://cocodataset.org/#explore?id=151497
+  #       "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
+  #       "https://farm3.staticflickr.com/2666/4003895811_dfe20d687a_z.jpg" # truck
+  #       # https://cocodataset.org/#explore?id=283700  # truck
+  #     ]
+  #   - [
+  #       # https://cocodataset.org/#explore?id=151497
+  #       "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
+  #       "https://farm1.staticflickr.com/3112/2770481931_159398e7ef_z.jpg" # another cat
+  #       # https://cocodataset.org/#explore?id=221966
+  #     ]
   image_pairs:
     - [
-        # https://cocodataset.org/#explore?id=151497
-        "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
-        "https://farm7.staticflickr.com/6039/5910257452_615e5114a6_z.jpg" # human
-        # https://cocodataset.org/#explore?id=305358
-        # https://cocodataset.org/#explore?id=93816
+        "images/cat_151497.jpeg",  # cat
+        "images/truck_283700.jpeg" # truck
       ]
     - [
-        # https://cocodataset.org/#explore?id=151497
-        "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
-        "https://farm1.staticflickr.com/3112/2770481931_159398e7ef_z.jpg" # another cat
-        # https://cocodataset.org/#explore?id=221966
+        "images/cat_151497.jpeg",  # cat
+        "images/cat_221966.jpeg" # another cat
       ]
   shared_image_id: "cat_human_434958"
   pairs_ids:
-    - ["cat_151497", "human_305358"]
+    - ["cat_151497", "truck_283700"]
     - ["cat_151497", "cat_221966"]
   
 

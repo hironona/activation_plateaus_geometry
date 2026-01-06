@@ -4,6 +4,9 @@ activations/
 # Generated plots
 plots/
 
+# Edited datasets
+images/
+
 # .ipynb for Commands
 main.ipynb
 

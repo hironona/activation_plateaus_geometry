@@ -10,8 +10,11 @@ import os
 import yaml
 from transformer_lens import HookedTransformer
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from transformers import AutoImageProcessor, AutoModel
+from transformers import AutoImageProcessor, AutoModel, ResNetForImageClassification
 from typing import List, Dict, Union
+from PIL import Image
+import requests
+from io import BytesIO
 
 # Dictionary of no-LayerNorm models with standardized names
 NO_LAYERNORM_MODELS = {
@@ -107,7 +110,7 @@ def load_resnet(model_name):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     actual_model_name = model_name
-    model = AutoModel.from_pretrained(actual_model_name).to(device)
+    model = ResNetForImageClassification.from_pretrained(actual_model_name).to(device)
     processor = AutoImageProcessor.from_pretrained(actual_model_name)
 
     return model, processor, device, model_name
@@ -138,8 +141,11 @@ def get_n_layers_from_model(model):
         # ViT model
         return len(model.vit.encoder.layer)
     elif hasattr(model, 'resnet'):
-        # ResNet
+        # ResNetForImageClassification
         return len(model.resnet.encoder.stages)
+    elif hasattr(model, 'encoder') and hasattr(model.encoder, 'stages'):
+        # ResNetModel
+        return len(model.encoder.stages)
     elif hasattr(model, 'encoder') and hasattr(model.encoder, 'layer'):
         # Some other transformer models
         return len(model.encoder.layer)
@@ -175,6 +181,24 @@ def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     target_norm = (1 - t) * norm_v0 + t * norm_v1
     return slerp_result * target_norm
 
+def linear_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
+    """
+    Linear interpolation with norm rescaling.
+    Interpolates both angle and magnitude linearly.
+    """
+    # Linear interpolation
+    lerp_result = (1 - t) * v0 + t * v1
+
+    # Rescale to linearly interpolated norm
+    norm_v0 = torch.norm(v0, dim=-1, keepdim=True)
+    norm_v1 = torch.norm(v1, dim=-1, keepdim=True)
+    target_norm = (1 - t) * norm_v0 + t * norm_v1
+
+    lerp_norm = torch.norm(lerp_result, dim=-1, keepdim=True)
+    lerp_result_normalized = lerp_result / (lerp_norm + 1e-10)  # Avoid division by zero
+
+    return lerp_result_normalized * target_norm
+
 def construct_filepath(model_name: str, shared_id: str, interpolation_layer: int, pair_ids: List[str], n_steps: int, freeze_suffix: str = "") -> str:
     """Construct full filepath for activation file.
 
@@ -203,6 +227,14 @@ def load_config(config_path: str = "./config.yaml") -> Dict:
     """Load configuration from yaml file."""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
+    
+def load_image(image_path:str) -> Image.Image:
+    """Load an image from the specified path."""
+    if image_path.startswith('http'):
+        response = requests.get(image_path)
+        return Image.open(requests.get(image_path, stream=True).raw).convert("RGB")
+    else:
+        return Image.open(image_path).convert("RGB")
 
 
 def get_n_layers(activations: Dict) -> int:
