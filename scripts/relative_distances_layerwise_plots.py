@@ -20,13 +20,13 @@ config = load_config()
 N_STEPS = config['n_steps']
 
 
-def variant1_interpolate_layer0(shared_id, pairs_ids, model_name):
+def variant1_interpolate_layer0(shared_id, pairs_ids, model_name, layer_to_interpolate):
     """Variant 1: Interpolate in layer 0, record in all subsequent layers."""
-    print("\nVariant 1: Interpolate in layer 0, record in all layers")
+    print(f"\nVariant 1: Interpolate in layer {layer_to_interpolate}, record in all layers")
 
     plot_data = {}
     for pair_ids in pairs_ids:
-        activations = load_activations(model_name, shared_id, 0, pair_ids, N_STEPS)
+        activations = load_activations(model_name, shared_id, layer_to_interpolate, pair_ids, N_STEPS)
         pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
         layer_dict = {}
         for key, layer_activations in activations.items():
@@ -37,9 +37,9 @@ def variant1_interpolate_layer0(shared_id, pairs_ids, model_name):
 
     generate_interpolation_results_plot(
         data_dict=plot_data,
-        suptitle="Relative Distances (Interpolate in Layer 0)",
+        suptitle=f"Relative Distances (Interpolate in Layer {layer_to_interpolate})",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"./plots/{model_name}/relative_distances_layerwise_layer0_interpolation.png",
+        output_path=f"./plots/{model_name}/relative_distances_layerwise_layer{layer_to_interpolate}_interpolation.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
@@ -125,20 +125,28 @@ def main():
         SHARED_ID = config['text']['shared_context']
         PAIRS_IDS = config['text']['token_pairs']
 
+    # Assumption: vision models need to deal with low-level features in early layers, thus interpolating at layer 0 does not show clear plateaus
+    if args.model_type in ['vit']:
+        layer_to_interpolate = 3
+    elif args.model_type in ['resnet']:
+        layer_to_interpolate = 1
+    else:
+        layer_to_interpolate = 0
+
     print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
 
     # Check if data exists
-    if not os.path.exists(construct_filepath(MODEL_NAME, SHARED_ID, 0, PAIRS_IDS[0], N_STEPS)):
+    if not os.path.exists(construct_filepath(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)):
         print("Data not found, skipping")
         return
 
     os.makedirs(f"./plots/{MODEL_NAME}", exist_ok=True)
 
-    activations = load_activations(MODEL_NAME, SHARED_ID, 0, PAIRS_IDS[0], N_STEPS)
+    activations = load_activations(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)
     n_layers = get_n_layers(activations)
     print(f"Model has {n_layers} layers")
 
-    variant1_interpolate_layer0(SHARED_ID, PAIRS_IDS, MODEL_NAME)
+    variant1_interpolate_layer0(SHARED_ID, PAIRS_IDS, MODEL_NAME, layer_to_interpolate)
     
     if not args.interpolate_only_first_layer:
         variant2_record_last_layer(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)

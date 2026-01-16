@@ -21,30 +21,27 @@ image:
   #   - [
   #       # https://cocodataset.org/#explore?id=151497
   #       "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
-  #       "https://farm3.staticflickr.com/2666/4003895811_dfe20d687a_z.jpg" # truck
-  #       # https://cocodataset.org/#explore?id=283700  # truck
+  #       "https://farm6.staticflickr.com/5309/5872877852_f0008b85e8_z.jpg" # cat of another type
+  #       # https://cocodataset.org/#explore?id=299180
   #     ]
   #   - [
   #       # https://cocodataset.org/#explore?id=151497
   #       "https://farm1.staticflickr.com/6/8378612_34ab6787ae_z.jpg",  # cat
-  #       "https://farm1.staticflickr.com/3112/2770481931_159398e7ef_z.jpg" # another cat
-  #       # https://cocodataset.org/#explore?id=221966
+  #       "https://farm4.staticflickr.com/3155/3054220240_700f232193_z.jpg" # cat of a similar type
+  #       # https://cocodataset.org/#explore?id=502813
   #     ]
-  image_pairs:
-    - [
-        "images/cat_151497.jpeg",  # cat
-        "images/truck_283700.jpeg" # truck
-      ]
-    - [
-        "images/cat_151497.jpeg",  # cat
-        "images/cat_221966.jpeg" # another cat
-      ]
-  shared_image_id: "cat_human_434958"
-  pairs_ids:
-    - ["cat_151497", "truck_283700"]
-    - ["cat_151497", "cat_221966"]
-  
-
-
+  # image_pairs:
+  #   - [
+  #       "images/cat_221966.jpeg",  # cat
+  #       "images/cat_299180.jpeg" # cat of another type
+  #     ]
+  #   - [
+  #       "images/cat_221966.jpeg",  # cat
+  #       "images/cat_502813.jpeg" # cat of a similar type
+  #     ]
+  # shared_image_id: ""
+  # pairs_ids:
+  #   - ["cat_221966", "cat_299180"]
+  #   - ["cat_221966", "cat_502813"]
 
 # images can be found in the Coco dataset: https://cocodataset.org/#explore

@@ -39,13 +39,21 @@ def main():
         SHARED_ID = config['text']['shared_context']
         PAIRS_IDS = config['text']['token_pairs']
 
+    # Assumption: vision models need to deal with low-level features in early layers, thus interpolating at layer 0 does not show clear plateaus
+    if args.model_type in ['vit']:
+        layer_to_interpolate = 3
+    elif args.model_type in ['resnet']:
+        layer_to_interpolate = 1
+    else:
+        layer_to_interpolate = 0
+
     print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
 
     os.makedirs(f"./plots/{MODEL_NAME}", exist_ok=True)
 
     for freeze_suffix, variant_name in FREEZING_VARIANTS:
         # Check if data exists for this variant
-        if not os.path.exists(construct_filepath(MODEL_NAME, SHARED_ID, 0, PAIRS_IDS[0], N_STEPS, freeze_suffix)):
+        if not os.path.exists(construct_filepath(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS, freeze_suffix)):
             print(f"\nSkipping {variant_name} (data not found)")
             continue
 
@@ -54,15 +62,15 @@ def main():
         # Load logits and compute relative distances
         plot_data = {}
         for pair_ids in PAIRS_IDS:
-            logits = load_activations(MODEL_NAME, SHARED_ID, 0, pair_ids, N_STEPS, freeze_suffix)['logits']
+            logits = load_activations(MODEL_NAME, SHARED_ID, layer_to_interpolate, pair_ids, N_STEPS, freeze_suffix)['logits']
             pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
             plot_data[pair_name] = torch.tensor(compute_relative_distances(logits))
 
         # Generate plot
-        output_path = f"./plots/{MODEL_NAME}/relative_distances_logits{freeze_suffix}.png"
+        output_path = f"./plots/{MODEL_NAME}/relative_distances_logits{freeze_suffix}_layer{layer_to_interpolate}_interpolation.png"
         generate_interpolation_results_plot(
             data_dict=plot_data,
-            suptitle=f"Logits Relative Distances ({variant_name})",
+            suptitle=f"Logits Relative Distances ({variant_name}), Interpolated at Layer {layer_to_interpolate}",
             ylabel="Relative Distance to A (0) vs B (1)",
             output_path=output_path,
             n_steps=N_STEPS,
