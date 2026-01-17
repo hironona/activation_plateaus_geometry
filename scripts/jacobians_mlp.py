@@ -62,8 +62,8 @@ def compute_jacobian_mlp(model, resid_mid_interpolated: torch.Tensor, layer_idx:
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
-    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use (hooked_transformer or vit or resnet or toy_resnet)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image or class_spiral)')
 
     args = parser.parse_args()
 
@@ -75,6 +75,9 @@ def main():
     elif args.data_type == 'text':
         SHARED_ID = config['text']['shared_context']
         PAIRS_IDS = config['text']['token_pairs']
+    elif args.data_type == 'class_spiral':
+        SHARED_ID = ''
+        PAIRS_IDS = [[f'{num}' for num in pair] for pair in config['class_spiral']['pairs']]
 
     print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
 

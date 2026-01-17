@@ -47,11 +47,23 @@ def compute_step_sizes_vit(activations: Dict[str, torch.Tensor], hook_name: str)
             step_sizes[f"Layer {layer_idx}"] = step_norms
     return step_sizes
 
+def compute_step_sizes_mlp(activations: Dict[str, torch.Tensor], hook_name: str) -> Dict[str, torch.Tensor]:
+    """Compute step sizes (L2 norm of differences between consecutive steps) for each layer."""
+    step_sizes = {}
+
+    for key, layer_activations in activations.items():
+        if key.startswith('layer') and key.endswith(f'_{hook_name}'):
+            step_diffs = layer_activations[1:] - layer_activations[:-1]  # [n_steps-1, hidden_dim]
+            step_norms = torch.norm(step_diffs, p=2, dim=1)  # [n_steps-1]
+
+            layer_idx = int(key.split('_')[0].replace('layer', ''))
+            step_sizes[f"Layer {layer_idx}"] = step_norms
+    return step_sizes
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
-    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use (hooked_transformer or vit or resnet or toy_resnet)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image or class_spiral)')
 
     args = parser.parse_args()
 
@@ -63,6 +75,9 @@ def main():
     elif args.data_type == 'text':
         SHARED_ID = config['text']['shared_context']
         PAIRS_IDS = config['text']['token_pairs']
+    elif args.data_type == 'class_spiral':
+        SHARED_ID = ''
+        PAIRS_IDS = [[f'{num}' for num in pair] for pair in config['class_spiral']['pairs']]
 
     # Assumption: vision models need to deal with low-level features in early layers, thus interpolating at layer 0 does not show clear plateaus
     if args.model_type in ['vit']:
@@ -83,6 +98,8 @@ def main():
             plot_data[pair_name] = compute_step_sizes_hooked_transformer(activations, 'resid_post')
         elif args.model_type == 'vit':
             plot_data[pair_name] = compute_step_sizes_vit(activations, 'resid_post')
+        elif args.model_type == 'toy_resnet':
+            plot_data[pair_name] = compute_step_sizes_mlp(activations, 'resid_post')
 
     # Generate plot
     output_path = f"./plots/{MODEL_NAME}/step_sizes_resid_post_layer{layer_to_interpolate}_interpolation.png"

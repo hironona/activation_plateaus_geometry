@@ -1,0 +1,131 @@
+import argparse
+import os
+import yaml
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from datetime import datetime
+
+from model import ResNetMLP
+from data import ToyDataset
+
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+def main():
+    parser = argparse.ArgumentParser(description="Train ResNet MLP on Toy Tasks")
+    parser.add_argument("--config", type=str, default="train/config.yaml", help="Path to config file")
+    parser.add_argument("--dry_run", action="store_true", help="Run a single epoch for testing")
+    args = parser.parse_args()
+
+    # Load Config
+    config = load_config(args.config)
+    
+    # Set Seed
+    set_seed(config['training']['seed'])
+
+    model_type = config['model_type']
+
+    # Device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # Data
+    print(f"Loading data for task: {config['task']['name']}")
+    task_name = config['task']['name']
+    num_samples = config['task']['num_samples']
+    noise_std = config['task']['noise_std']
+    num_classes = config['task']['num_classes']
+    dataset = ToyDataset(task_name, num_samples, noise_std, num_classes)
+    dataloader = DataLoader(dataset, batch_size=config['training']['batch_size'], shuffle=True)
+
+    classification = task_name.startswith("class")
+
+    # Model
+    print("Initializing model...")
+    if model_type == "ResNetMLP":
+        model = ResNetMLP(
+            input_dim=config['model']['input_dim'],
+            output_dim=config['model']['output_dim'],
+            hidden_dim=config['model']['hidden_dim'],
+            resblock_width=config['model']['resblock_width'],
+            num_blocks=config['model']['num_blocks'],
+            dropout=config['model']['dropout'],
+        ).to(device)
+    elif model_type == "ResNetSkeleton":
+        model = ResNetSkeleton(
+            input_dim=config['model']['input_dim'],
+            output_dim=config['model']['output_dim'],
+            hidden_dim=config['model']['hidden_dim'],
+            resblock_width=config['model']['resblock_width'],
+            num_blocks=config['model']['num_blocks'],
+            dropout=config['model']['dropout'],
+        ).to(device)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    # Optimizer & Loss
+    optimizer = optim.Adam(model.parameters(), lr=config['training']['learning_rate'])
+    if classification:
+        criterion = nn.CrossEntropyLoss()
+    else:
+        criterion = nn.MSELoss()
+
+    # Directories
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    checkpoint_dir = f"{config['training']['checkpoint_dir']}/{task_name}/{model_type}/{timestamp}"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # Training Loop
+    epochs = 1 if args.dry_run else config['training']['epochs']
+    print(f"Starting training for {epochs} epochs...")
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        total_loss = 0.0
+        
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{epochs}", leave=False)
+        for inputs, targets in progress_bar:
+            inputs, targets = inputs.to(device), targets.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(inputs)
+
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+            progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
+
+        avg_loss = total_loss / len(dataloader)
+        print(f"Epoch {epoch}: Average Loss = {avg_loss:.4f}")
+
+        # Save Checkpoint
+        if epoch % config['training']['save_every'] == 0 or epoch == epochs:
+            ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch}.pt")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': avg_loss,
+                'config': config
+            }, ckpt_path)
+            print(f"Saved checkpoint: {ckpt_path}")
+
+    # Save config
+    with open(os.path.join(checkpoint_dir, "config.yaml"), "w") as f:
+        yaml.dump(config, f)
+
+    print("Training finished.")
+
+if __name__ == "__main__":
+    main()

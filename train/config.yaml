@@ -1,0 +1,23 @@
+model:
+  input_dim: 2
+  output_dim: 3 # for classification, this should match num_classes 
+  hidden_dim: 10
+  resblock_width: 10
+  num_blocks: 20
+  dropout: 0.0
+
+model_type: "ResNetMLP" # Options: "ResNetMLP", "ResNetSkeleton"
+
+training:
+  batch_size: 64
+  learning_rate: 0.001
+  epochs: 100
+  checkpoint_dir: "./checkpoints"
+  save_every: 10
+  seed: 42
+
+task:
+  name: "class_spiral" # Options: "reg_sine_wave", "class_spiral"
+  num_samples: 50000
+  noise_std: 0.0
+  num_classes: 3

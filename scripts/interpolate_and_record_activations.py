@@ -19,12 +19,14 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from transformers import AutoImageProcessor, ViTForImageClassification
 from transformers import ResNetForImageClassification
+
 from PIL import Image
-import requests
-from io import BytesIO
 import sys
 sys.path.append('./scripts')
-from utils import load_model, load_config, load_image, slerp_rescale, linear_rescale, construct_filepath, get_n_layers_from_model
+sys.path.append('./train')
+from utils import load_model, load_config, load_image, slerp_rescale, linear_rescale, construct_filepath, get_n_layers_from_model, load_model_from_checkpoint
+
+from model import ResNetMLP
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -140,6 +142,41 @@ def collect_original_activations_resnet(model: ResNetForImageClassification, pro
 
     return activations
 
+def collect_original_activations_toy_resnet(model: ResNetMLP, variable_data: torch.Tensor, device: str) -> Dict[str, torch.Tensor]:
+    """
+    Collect activations from a toy model.
+    """
+    inputs = variable_data
+    
+    activations = {}
+
+    def create_collection_hook(layer_idx):
+        """Create hook to collect all patch token activations at each layer."""
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                output = output[0]
+            activations[f"layer{layer_idx}_resid_post"] = output.cpu().clone()
+        return hook_fn
+
+    hooks = []
+
+    for layer_idx, residual_block in enumerate(model.blocks):
+        hooks.append(residual_block.hook_resid_post.register_forward_hook(create_collection_hook(layer_idx)))
+    
+    # Forward pass
+    model.eval()
+    with torch.no_grad():
+        outputs = model(inputs)
+    
+    # Clean up
+    del inputs, outputs
+    torch.cuda.empty_cache()
+
+    for hook in hooks:
+        hook.remove()
+
+    return activations
+
 def collect_original_activations_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tensor]:
     """
     Wrapper to collect original activations from different model types.
@@ -150,18 +187,21 @@ def collect_original_activations_wrapper(model_type: str, **kwargs) -> Dict[str,
     :return: Dictionary mapping layer names to activation tensors
     :rtype: Dict[str, torch.Tensor]
     :raises ValueError: If model_type is not supported
-    """
-    if model_type not in ['hooked_transformer', 'vit', 'resnet']:
-        raise ValueError(f"Unsupported model type: {model_type}")
-    
+    """    
     if model_type == 'hooked_transformer':
         return collect_original_activations_hooked_transformer(**kwargs)
-    
-    if model_type == 'vit':
+
+    elif model_type == 'vit':
         return collect_original_activations_vit(**kwargs)
     
-    if model_type == 'resnet':
+    elif model_type == 'resnet':
         return collect_original_activations_resnet(**kwargs)
+
+    elif model_type == 'toy_resnet':
+        return collect_original_activations_toy_resnet(**kwargs)
+
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
     
 def interpolate_resid_post_layer(
     model: HookedTransformer,
@@ -461,7 +501,98 @@ def interpolate_vit_layer(
     
     return activations
 
-def slerp_resnet(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) -> torch.Tensor:
+def interpolate_toy_resnet_layer(
+    model: ResNetMLP,
+    resid_post_a: Dict[str, torch.Tensor],
+    resid_post_b: Dict[str, torch.Tensor],
+    interpolation_layer: int,
+    n_steps: int,
+    device: str,
+    freeze_attention: bool = False,
+    freeze_mlp: bool = False,
+) -> Dict[str, torch.Tensor]:
+    
+    n_layers = len(model.blocks)
+    # Get activations at interpolation layer for both images
+    resid_a = resid_post_a[f'layer{interpolation_layer}_resid_post']  # [1, 216, hidden_dim]    
+    resid_b = resid_post_b[f'layer{interpolation_layer}_resid_post']  # [1, 216, hidden_dim]
+    
+    # Compute SLERP interpolations
+    resid_a_device = resid_a.to(device)
+    resid_b_device = resid_b.to(device)
+    alphas = torch.linspace(0, 1, n_steps, device=device)
+    
+    # LINEAR INTERPOLATION
+    interpolated_activations = torch.stack([
+        linear_rescale(resid_a_device, resid_b_device, alpha.item()).squeeze(0)
+        for alpha in alphas
+    ])  # [n_steps, hidden_dim]
+    
+    # Storage for collected activations
+    activations = {f'layer{interpolation_layer}_resid_post': interpolated_activations.cpu().clone()}
+    
+    # Hook to inject interpolated activations
+    def inject_hook(module, input, output):
+        if isinstance(output, tuple):
+            output = list(output)
+            # Replace non-CLS tokens with interpolated values
+            output[0][:, :] = interpolated_activations
+            return tuple(output)
+        else:
+            output[:, :] = interpolated_activations
+            return output
+    
+    # Hook to collect resid_post (after MLP, final layer output)
+    def create_resid_post_hook(target_layer):
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                hidden_states = output[0]
+            else:
+                hidden_states = output
+            # Store activation [n_steps, hidden_dim]
+            activations[f'layer{target_layer}_resid_post'] = hidden_states.cpu().clone()
+            return output
+        return hook_fn
+    
+    # get layers
+    layers = model.blocks
+
+    # Register hooks
+    hooks = []
+    
+    # Injection hook at interpolation layer - inject the interpolated CLS token activation
+    injection_hook = layers[interpolation_layer].register_forward_hook(inject_hook)
+    hooks.append(injection_hook)
+    
+    # Collection hooks for subsequent layers
+    for i in range(interpolation_layer, n_layers):
+        layer = layers[i]
+        
+        # Hook layer output (resid_post) - final output of the layer
+        layer_hook = layer.register_forward_hook(create_resid_post_hook(i))
+        hooks.append(layer_hook)
+    
+    # Create dummy inputs
+    batched_inputs = torch.zeros((n_steps, model.input_layer.in_features), device=device)
+    
+    # Forward pass
+    model.eval()
+    with torch.no_grad():
+        logits = model(batched_inputs)
+    
+    activations['logits'] = logits.cpu().clone()
+    
+    # Remove all hooks
+    for hook in hooks:
+        hook.remove()
+    
+    # Clean up
+    del interpolated_activations, logits, batched_inputs
+    torch.cuda.empty_cache()
+    
+    return activations
+
+def slerp_cnn(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) -> torch.Tensor:
     """
     SLERP wrapper for ResNet feature maps.
     Treats the entire feature map as a single vector and performs spherical linear interpolation.
@@ -501,7 +632,7 @@ def slerp_resnet(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) 
     # Reshape back to original shape: [n_steps, C, H, W]
     return interpolated_flat.view(n_steps, c, h, w)
 
-def lerp_resnet(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) -> torch.Tensor:
+def lerp_cnn(v0: torch.Tensor, v1: torch.Tensor, n_steps: int, device: str) -> torch.Tensor:
     """
     Linear interpolation wrapper for ResNet feature maps.
     Treats the entire feature map as a single vector and performs linear interpolation.
@@ -580,7 +711,7 @@ def interpolate_resnet_layer(
     resid_b = resid_post_b[key]
     
     # Spherical interpolation for ResNet (Flatten -> Linear Interpolation -> Reshape)
-    interpolated_activations = slerp_resnet(resid_a, resid_b, n_steps, device)  # (n_steps, C, H, W)
+    interpolated_activations = slerp_cnn(resid_a, resid_b, n_steps, device)  # (n_steps, C, H, W)
     
     # Ensure interpolated activations are on device for injection
     interpolated_activations_device = interpolated_activations.to(device)
@@ -650,18 +781,22 @@ def interpolate_layer_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tens
     :return: Dictionary mapping layer names to interpolated activation tensors
     :rtype: Dict[str, torch.Tensor]
     :raises ValueError: If model_type is not supported
-    """
-    if model_type not in ['hooked_transformer', 'vit', 'resnet']:
-        raise ValueError(f"Unsupported model type: {model_type}")
+    """        
     
     if model_type == 'hooked_transformer':
         return interpolate_resid_post_layer(**kwargs)
     
-    if model_type == 'vit':
+    elif model_type == 'vit':
         return interpolate_vit_layer(**kwargs)
     
-    if model_type == 'resnet':
+    elif model_type == 'resnet':
         return interpolate_resnet_layer(**kwargs)
+
+    elif model_type == 'toy_resnet':
+        return interpolate_toy_resnet_layer(**kwargs)
+
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
@@ -669,8 +804,8 @@ def main():
     parser.add_argument('--freeze_mlp', action='store_true', help='Freeze MLP outputs to first step')
     parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
 
-    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
-    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image)')
 
     args = parser.parse_args()
 
@@ -682,9 +817,14 @@ def main():
     print(f"Freeze attention: {args.freeze_attention} | Freeze MLP: {args.freeze_mlp}")
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = load_model(MODEL_NAME)
+    if args.model_type == 'toy_resnet':
+        model, _ = load_model_from_checkpoint(MODEL_NAME)
+        n_layers = len(model.blocks)
+    else:
+        model = load_model(MODEL_NAME)
+        n_layers = get_n_layers_from_model(model)
+
     model = model.to(device)
-    n_layers = get_n_layers_from_model(model)
     print(f"Loaded {n_layers}-layer model on {device}")
 
     output_dir = f"./activations/{MODEL_NAME}"
@@ -745,6 +885,28 @@ def main():
         SHARED_ID = config['image']['shared_image_id']
         PAIRS_IDS = config['image']['pairs_ids']
 
+    elif args.data_type == 'class_spiral':
+        PAIRS = config['class_spiral']['pairs']
+
+        params_collect = {
+            'model': model,
+            'variable_data': None,  # placeholder for pair
+            'device': device
+        }
+        params_interpolate = {
+            'model': model,
+            'resid_post_a': None,
+            'resid_post_b': None,
+            'interpolation_layer': None,
+            'n_steps': N_STEPS,
+            'device': device,
+        }
+
+        # for path construction
+        SHARED_ID = ''
+        PAIRS_IDS = [[f'{num}' for num in pair] for pair in PAIRS]
+        PAIRS = [torch.tensor(pair) for pair in PAIRS]
+
     for i, pair in enumerate(PAIRS):
         print(f"\nProcessing {pair}")
 
@@ -790,7 +952,6 @@ def main():
             torch.save(interpolated_activations, filepath)
 
     print("\n=== Complete ===")
-
 
 if __name__ == "__main__":
     main()

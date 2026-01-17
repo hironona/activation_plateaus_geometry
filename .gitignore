@@ -1,5 +1,6 @@
 # Activation data
 activations/
+checkpoints/
 
 # Generated plots
 plots/

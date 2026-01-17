@@ -6,12 +6,27 @@ model_names:
   hooked_transformer: "gpt2-large"
   vit: "facebook/dinov2-large"
   resnet: "microsoft/resnet-101"
+  toy_resnet: "checkpoints/class_spiral/20260116_185236/checkpoint_epoch_100.pt"
 
 text: 
   shared_context: "The house was"
   token_pairs:
     - ["big", "in"]
     - ["big", "large"]
+
+class_spiral:
+  pairs:
+    - [
+      [0, 0.5],
+      [-0.5, 0.5]
+      # one in green, one in blue. Boundary at x = -0.25
+    ]
+    - [
+      [0, 0.5],
+      [0.5, 0.5]
+      # both green
+    ]
+  
 
 image:
   # https://cocodataset.org/#explore?id=114269
@@ -30,18 +45,18 @@ image:
   #       "https://farm4.staticflickr.com/3155/3054220240_700f232193_z.jpg" # cat of a similar type
   #       # https://cocodataset.org/#explore?id=502813
   #     ]
-  # image_pairs:
-  #   - [
-  #       "images/cat_221966.jpeg",  # cat
-  #       "images/cat_299180.jpeg" # cat of another type
-  #     ]
-  #   - [
-  #       "images/cat_221966.jpeg",  # cat
-  #       "images/cat_502813.jpeg" # cat of a similar type
-  #     ]
-  # shared_image_id: ""
-  # pairs_ids:
-  #   - ["cat_221966", "cat_299180"]
-  #   - ["cat_221966", "cat_502813"]
+  image_pairs:
+    - [
+        "images/dog1.jpg",  # dog1
+        "images/dog2.jpg" # dog2
+      ]
+    - [
+        "images/dog1.jpg",  # dog1
+        "images/cat.jpg" # cat
+      ]
+  shared_image_id: ""
+  pairs_ids:
+    - ["dog1", "dog2"]
+    - ["dog1", "cat"]
 
 # images can be found in the Coco dataset: https://cocodataset.org/#explore

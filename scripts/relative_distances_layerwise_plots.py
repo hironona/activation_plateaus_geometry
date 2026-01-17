@@ -110,8 +110,8 @@ def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids, model_name
 
 def main():
     parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
-    parser.add_argument('--data_type', type=str, choices=['text', 'image'], required=True, help='Type of data type to use (text or image)')
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use (hooked_transformer or vit or resnet or toy_resnet)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image or class_spiral)')
     parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
 
     args = parser.parse_args()
@@ -124,6 +124,9 @@ def main():
     elif args.data_type == 'text':
         SHARED_ID = config['text']['shared_context']
         PAIRS_IDS = config['text']['token_pairs']
+    elif args.data_type == 'class_spiral':
+        SHARED_ID = ''
+        PAIRS_IDS = [[f'{num}' for num in pair] for pair in config['class_spiral']['pairs']]
 
     # Assumption: vision models need to deal with low-level features in early layers, thus interpolating at layer 0 does not show clear plateaus
     if args.model_type in ['vit']:

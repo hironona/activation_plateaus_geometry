@@ -16,6 +16,10 @@ from PIL import Image
 import requests
 from io import BytesIO
 
+import sys
+sys.path.append('./train')
+from model import ResNetMLP
+
 # Dictionary of no-LayerNorm models with standardized names
 NO_LAYERNORM_MODELS = {
     "gpt2-small_LNFree": "schaeff/gpt2-small_LNFree300",
@@ -132,6 +136,15 @@ def load_model(model_name):
     model.original_model_name = model_name
     return model
 
+def load_model_from_checkpoint(checkpoint_path):
+    checkpoint = torch.load(checkpoint_path)
+    model_config = checkpoint['config']['model']
+
+    model = ResNetMLP(**model_config)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    return model, model_config
+
 def get_n_layers_from_model(model):
     """Get number of layers from a model, handling both HookedTransformer and ViT models."""
     if hasattr(model, 'cfg') and hasattr(model.cfg, 'n_layers'):
@@ -223,7 +236,7 @@ def load_activations(model_name: str, shared_id: str, interpolation_layer: int, 
     return torch.load(filepath, map_location='cpu')
 
 
-def load_config(config_path: str = "./config.yaml") -> Dict:
+def load_config(config_path: str = "./scripts/config.yaml") -> Dict:
     """Load configuration from yaml file."""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
