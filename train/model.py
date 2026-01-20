@@ -8,12 +8,16 @@ class ResidualBlock(nn.Module):
     """
     def __init__(self, hidden_dim: int, resblock_width: int, dropout: float = 0.0):
         super().__init__()
+        self.hidden_dim = hidden_dim
+        self.resblock_width = resblock_width
+        self.dropout = dropout
         
         # 1. Define Hook Points (Identity layers)
         # These are no-ops computationally, but allow you to attach hooks 
         # specifically to the stream "x" before and after processing.
         self.hook_resid_pre = nn.Identity()
         self.hook_resid_post = nn.Identity()
+        self.hook_mlp_out = nn.Identity()
         
         # 2. Block Layers
         self.ln1 = nn.LayerNorm(hidden_dim)        
@@ -36,6 +40,8 @@ class ResidualBlock(nn.Module):
         out = self.ln2(out)
         out = F.relu(out)
         out = self.fc2(out)
+
+        out = self.hook_mlp_out(out)
         
         x = x + out
         
@@ -46,6 +52,14 @@ class ResidualBlock(nn.Module):
 class ResNetMLP(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, hidden_dim: int, resblock_width: int, num_blocks: int, dropout: float = 0.0):
         super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.hidden_dim = hidden_dim
+        self.resblock_width = resblock_width
+        self.num_blocks = num_blocks
+        self.dropout = dropout
+
+        self.hook_input = nn.Identity()
                 
         self.input_layer = nn.Linear(input_dim, hidden_dim)
         
@@ -59,6 +73,7 @@ class ResNetMLP(nn.Module):
         self.output_layer = nn.Linear(hidden_dim, output_dim)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.hook_input(x)
         x = self.input_layer(x)
         x = self.hook_embed(x)
         
@@ -68,15 +83,26 @@ class ResNetMLP(nn.Module):
         x = self.final_norm(x)
         x = F.relu(x)
         x = self.output_layer(x)
+        if self.output_dim == 1:
+            x = x.squeeze(1)
         return x
 
 
 
 class ResNetMLPSkeleton(nn.Module):
-    def __init__(self, input_dim: int, output_dim: int, resblock_width: int, num_blocks: int, dropout: float = 0.0):
+    def __init__(self, input_dim: int, output_dim: int, hidden_dim: int, resblock_width: int, num_blocks: int, dropout: float = 0.0):
         """input dimension is the hidden dimension: R^n --> R^n mapping"""
         
         super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.hidden_dim = hidden_dim
+        self.resblock_width = resblock_width
+        self.num_blocks = num_blocks
+        self.dropout = dropout
+        
+        self.hook_input = nn.Identity()
+        self.hook_embed = nn.Identity()
         
         self.blocks = nn.ModuleList([
             ResidualBlock(
@@ -90,6 +116,8 @@ class ResNetMLPSkeleton(nn.Module):
         self.output_layer = nn.Linear(input_dim, output_dim)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.hook_input(x)
+        x = self.hook_embed(x)
         for block in self.blocks:
             x = block(x)
 

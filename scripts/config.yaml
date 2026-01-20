@@ -6,7 +6,11 @@ model_names:
   hooked_transformer: "gpt2-large"
   vit: "facebook/dinov2-large"
   resnet: "microsoft/resnet-101"
-  toy_resnet: "checkpoints/class_spiral/20260116_185236/checkpoint_epoch_100.pt"
+  toy_resnet: "checkpoints/class_spiral/ResNetMLP/20260117_145734/checkpoint_epoch_100.pt"
+
+visualization:
+  n_points: 5000
+  
 
 text: 
   shared_context: "The house was"

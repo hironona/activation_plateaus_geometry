@@ -84,6 +84,8 @@ def main():
         layer_to_interpolate = 3
     elif args.model_type in ['resnet']:
         layer_to_interpolate = 1
+    elif args.model_type in ['toy_resnet']:
+        layer_to_interpolate = -1
     else:
         layer_to_interpolate = 0
 

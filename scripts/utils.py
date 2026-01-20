@@ -18,7 +18,7 @@ from io import BytesIO
 
 import sys
 sys.path.append('./train')
-from model import ResNetMLP
+from model import ResNetMLP, ResNetMLPSkeleton
 
 # Dictionary of no-LayerNorm models with standardized names
 NO_LAYERNORM_MODELS = {
@@ -139,8 +139,15 @@ def load_model(model_name):
 def load_model_from_checkpoint(checkpoint_path):
     checkpoint = torch.load(checkpoint_path)
     model_config = checkpoint['config']['model']
+    model_type = checkpoint['config']['model_type']
 
-    model = ResNetMLP(**model_config)
+    if model_type == "ResNetMLP":
+        model = ResNetMLP(**model_config)
+    elif model_type == "ResNetMLPSkeleton":
+        model = ResNetMLPSkeleton(**model_config)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     return model, model_config

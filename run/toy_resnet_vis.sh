@@ -9,6 +9,8 @@ echo "Generating plots..."
 python ./scripts/step_sizes_plots.py --model_type toy_resnet --data_type class_spiral
 python ./scripts/relative_distances_layerwise_plots.py --model_type toy_resnet --data_type class_spiral
 python ./scripts/relative_distances_logits_plots.py --model_type toy_resnet --data_type class_spiral
+python ./scripts/spline_plots.py --model_type toy_resnet --data_type class_spiral
+
 # python ./scripts/jacobians_layerwise.py --model_type toy_resnet --data_type class_spiral
 # python ./scripts/jacobians_full_residual.py --model_type toy_resnet --data_type class_spiral
 

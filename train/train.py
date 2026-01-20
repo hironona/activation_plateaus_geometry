@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from datetime import datetime
 
-from model import ResNetMLP
+from model import ResNetMLP, ResNetMLPSkeleton
 from data import ToyDataset
 
 def load_config(config_path):
@@ -44,7 +44,8 @@ def main():
     num_samples = config['task']['num_samples']
     noise_std = config['task']['noise_std']
     num_classes = config['task']['num_classes']
-    dataset = ToyDataset(task_name, num_samples, noise_std, num_classes)
+    distribution = config['task']['distribution']
+    dataset = ToyDataset(task_name, num_samples, noise_std, num_classes, distribution)
     dataloader = DataLoader(dataset, batch_size=config['training']['batch_size'], shuffle=True)
 
     classification = task_name.startswith("class")
@@ -60,8 +61,8 @@ def main():
             num_blocks=config['model']['num_blocks'],
             dropout=config['model']['dropout'],
         ).to(device)
-    elif model_type == "ResNetSkeleton":
-        model = ResNetSkeleton(
+    elif model_type == "ResNetMLPSkeleton":
+        model = ResNetMLPSkeleton(
             input_dim=config['model']['input_dim'],
             output_dim=config['model']['output_dim'],
             hidden_dim=config['model']['hidden_dim'],
@@ -74,8 +75,10 @@ def main():
 
     # Optimizer & Loss
     optimizer = optim.Adam(model.parameters(), lr=config['training']['learning_rate'])
-    if classification:
+    if classification and num_classes > 2:
         criterion = nn.CrossEntropyLoss()
+    elif classification and num_classes == 2:
+        criterion = nn.BCEWithLogitsLoss()
     else:
         criterion = nn.MSELoss()
 

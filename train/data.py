@@ -8,16 +8,22 @@ class ToyDataset(Dataset):
     Synthetic dataset for toy regression tasks.
     Generates data on-the-fly (or pre-generated in memory) for consistency.
     """
-    def __init__(self, task_name: str, num_samples: int = 10000, noise_std: float = 0.05, num_classes: int = 3):
+    def __init__(self, task_name: str, num_samples: int = 10000, noise_std: float = 0.05, num_classes: int = 3, distribution: str = 'uniform'):
         self.task_name = task_name
         self.num_samples = num_samples
         self.noise_std = noise_std
         self.num_classes = num_classes
+        self.distribution = distribution
+
+
         self.data, self.targets = self._generate_data()
 
     def _generate_data(self):
         # Generate 2D inputs in range [-1, 1]
-        X = np.random.uniform(-1, 1, size=(self.num_samples, 2)).astype(np.float32)
+        if self.distribution == 'uniform':
+            X = np.random.uniform(-1, 1, size=(self.num_samples, 2)).astype(np.float32)
+        elif self.distribution == 'normal':
+            X = np.random.normal(0, 1, size=(self.num_samples, 2)).astype(np.float32)
         
         if self.task_name == "reg_sine_wave":
             # Task: f(x1, x2) = {sin(x1) + cos(x2)} * INDICATOR(x1 < 0)
@@ -43,8 +49,10 @@ class ToyDataset(Dataset):
             # Assign Classes based on Angle Sectors
             y = np.floor((theta_twisted / (2 * np.pi)) * self.num_classes).reshape(-1, 1).astype(int)
 
-            # One-hot encode the targets
-            y = np.eye(self.num_classes)[y.squeeze(1)]
+            # if num_classes == 2, we don't need to one-hot encode the targets
+            if self.num_classes > 2:
+                # One-hot encode the targets
+                y = np.eye(self.num_classes)[y.squeeze(1)]
 
         else:
             raise ValueError(f"Unknown task: {self.task_name}")
@@ -52,10 +60,7 @@ class ToyDataset(Dataset):
         # Add some small Gaussian noise to the inputs
         X += np.random.normal(0, self.noise_std, size=X.shape)
 
-        if self.task_name in ["class_spiral"]:
-             return torch.from_numpy(X), torch.from_numpy(y)
-        else:
-             return torch.from_numpy(X), torch.from_numpy(y.astype(np.float32))
+        return torch.from_numpy(X), torch.from_numpy(y.astype(np.float32))
 
     def __len__(self):
         return self.num_samples
@@ -65,7 +70,8 @@ class ToyDataset(Dataset):
 
 def visualize_dataset():
     print("Generating Spiral Dataset...")
-    dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=3, noise_std=0.05)
+    num_classes = 2
+    dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=num_classes, noise_std=0)
     X = dataset.data.numpy()
     y = dataset.targets.numpy()
 
@@ -77,7 +83,7 @@ def visualize_dataset():
     
     # Aesthetics
     plt.colorbar(scatter, label="Class Label")
-    plt.title(f"Twisted Spiral Task (3 Classes)\nManifold for ResNet Activation Analysis")
+    plt.title(f"Twisted Spiral Task ({num_classes} Classes)\nManifold for ResNet Activation Analysis")
     plt.xlabel("$x_1$")
     plt.ylabel("$x_2$")
     plt.xlim(-1.1, 1.1)

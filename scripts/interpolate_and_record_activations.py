@@ -11,6 +11,7 @@ For each token pair and each layer:
 Outputs: One file per (token_pair, interpolation_layer, freeze_mode) combination
 """
 
+from typing import Union
 import torch
 import os
 import argparse
@@ -26,7 +27,7 @@ sys.path.append('./scripts')
 sys.path.append('./train')
 from utils import load_model, load_config, load_image, slerp_rescale, linear_rescale, construct_filepath, get_n_layers_from_model, load_model_from_checkpoint
 
-from model import ResNetMLP
+from model import ResNetMLP, ResNetMLPSkeleton
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -39,9 +40,6 @@ ACTIVATION_HOOKS = [
     ('mlp_out', 'blocks.{}.hook_mlp_out'),
     ('resid_post', 'blocks.{}.hook_resid_post'),
 ]
-
-#TODO: create util func to get layers from ViT
-#TODO: create util func to load image from url
 
 
 def collect_original_activations_hooked_transformer(model: HookedTransformer, shared_context: str, variable_data: str, device: str) -> Dict[str, torch.Tensor]:
@@ -142,7 +140,7 @@ def collect_original_activations_resnet(model: ResNetForImageClassification, pro
 
     return activations
 
-def collect_original_activations_toy_resnet(model: ResNetMLP, variable_data: torch.Tensor, device: str) -> Dict[str, torch.Tensor]:
+def collect_original_activations_toy_resnet(model: Union[ResNetMLP, ResNetMLPSkeleton], variable_data: torch.Tensor, device: str) -> Dict[str, torch.Tensor]:
     """
     Collect activations from a toy model.
     """
@@ -153,12 +151,16 @@ def collect_original_activations_toy_resnet(model: ResNetMLP, variable_data: tor
     def create_collection_hook(layer_idx):
         """Create hook to collect all patch token activations at each layer."""
         def hook_fn(module, input, output):
-            if isinstance(output, tuple):
-                output = output[0]
             activations[f"layer{layer_idx}_resid_post"] = output.cpu().clone()
         return hook_fn
 
     hooks = []
+
+    # input layer index: -2
+    hooks.append(model.hook_input.register_forward_hook(create_collection_hook(-2)))
+
+    # embed layer index: -1
+    hooks.append(model.hook_embed.register_forward_hook(create_collection_hook(-1)))
 
     for layer_idx, residual_block in enumerate(model.blocks):
         hooks.append(residual_block.hook_resid_post.register_forward_hook(create_collection_hook(layer_idx)))
@@ -502,7 +504,7 @@ def interpolate_vit_layer(
     return activations
 
 def interpolate_toy_resnet_layer(
-    model: ResNetMLP,
+    model: Union[ResNetMLP, ResNetMLPSkeleton],
     resid_post_a: Dict[str, torch.Tensor],
     resid_post_b: Dict[str, torch.Tensor],
     interpolation_layer: int,
@@ -514,8 +516,8 @@ def interpolate_toy_resnet_layer(
     
     n_layers = len(model.blocks)
     # Get activations at interpolation layer for both images
-    resid_a = resid_post_a[f'layer{interpolation_layer}_resid_post']  # [1, 216, hidden_dim]    
-    resid_b = resid_post_b[f'layer{interpolation_layer}_resid_post']  # [1, 216, hidden_dim]
+    resid_a = resid_post_a[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]    
+    resid_b = resid_post_b[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]
     
     # Compute SLERP interpolations
     resid_a_device = resid_a.to(device)
@@ -536,10 +538,10 @@ def interpolate_toy_resnet_layer(
         if isinstance(output, tuple):
             output = list(output)
             # Replace non-CLS tokens with interpolated values
-            output[0][:, :] = interpolated_activations
+            output[0] = interpolated_activations
             return tuple(output)
         else:
-            output[:, :] = interpolated_activations
+            output = interpolated_activations
             return output
     
     # Hook to collect resid_post (after MLP, final layer output)
@@ -554,13 +556,23 @@ def interpolate_toy_resnet_layer(
             return output
         return hook_fn
     
+    def create_mlp_out_hook(target_layer):
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                hidden_states = output[0]
+            else:
+                hidden_states = output
+            # Store activation [n_steps, hidden_dim]
+            activations[f'layer{target_layer}_mlp_out'] = hidden_states.cpu().clone()
+            return output
+        return hook_fn
+    
     # get layers
-    layers = model.blocks
+    layers = list(model.blocks) + [model.hook_input, model.hook_embed]  # hook_input is layer -2, hook_embed is layer -1
 
     # Register hooks
     hooks = []
     
-    # Injection hook at interpolation layer - inject the interpolated CLS token activation
     injection_hook = layers[interpolation_layer].register_forward_hook(inject_hook)
     hooks.append(injection_hook)
     
@@ -569,11 +581,22 @@ def interpolate_toy_resnet_layer(
         layer = layers[i]
         
         # Hook layer output (resid_post) - final output of the layer
-        layer_hook = layer.register_forward_hook(create_resid_post_hook(i))
-        hooks.append(layer_hook)
+        if i < 0:   # hook_input or hook_embed
+            layer_hook = layer.register_forward_hook(create_resid_post_hook(i))
+            hooks.append(layer_hook)
+        else:   # residual blocks
+            layer_hook = layer.hook_resid_post.register_forward_hook(create_resid_post_hook(i))
+            hooks.append(layer_hook)
+        
+        # Hook mlp_out
+        if i < 0:   # hook_input or hook_embed. Hamming distance will be 0
+            pass
+        else:   # residual blocks
+            mlp_out_hook = layer.hook_mlp_out.register_forward_hook(create_mlp_out_hook(i))
+            hooks.append(mlp_out_hook)
     
     # Create dummy inputs
-    batched_inputs = torch.zeros((n_steps, model.input_layer.in_features), device=device)
+    batched_inputs = torch.zeros((n_steps, model.input_dim), device=device)
     
     # Forward pass
     model.eval()
@@ -928,11 +951,16 @@ def main():
         if args.interpolate_only_first_layer:
             if args.model_type == 'vit':
                 layer_to_interpolate = 1  # ViT's CLS token is initialized the same for layer 0. Therefore, interpolating between two IDENTICAL CLS tokens at layer 0 is meaningless.
+            elif args.model_type == 'toy_resnet':
+                layer_to_interpolate = -2 # hook_input is layer -2
             else:
                 layer_to_interpolate = 0
             pbar = tqdm([layer_to_interpolate], desc=f"Interpolating {pair}{freeze_suffix}")
-        else:
-            pbar = tqdm(range(n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
+        else:   
+            if args.model_type == 'toy_resnet':
+                pbar = tqdm(range(-2, n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
+            else:
+                pbar = tqdm(range(n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
 
         for interpolation_layer in pbar:
             
