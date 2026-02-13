@@ -15,20 +15,24 @@ main.ipynb
 test.py
 
 # Python cache
-__pycache__/
+*__pycache__/
 *.pyc
 *.pyo
 *.pyd
 
 # Jupyter
-.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# MacOS
+*.DS_Store
 
 # IDE
-.vscode/
-.idea/
+*.vscode/
+*.idea/
 *.swp
 *.swo
 *~
+
 
 # Claude
 CLAUDE.md
