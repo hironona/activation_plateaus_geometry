@@ -83,8 +83,8 @@ class ResNetMLP(nn.Module):
         x = self.final_norm(x)
         x = F.relu(x)
         x = self.output_layer(x)
-        if self.output_dim == 1:
-            x = x.squeeze(1)
+        # if self.output_dim == 1:
+        #     x = x.squeeze(1)
         return x
 
 

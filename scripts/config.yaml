@@ -1,16 +1,26 @@
 # Configuration for paper_analyses_v2 project
 
-n_steps: 20
+n_steps: 50
 
 model_names:
   hooked_transformer: "gpt2-large"
   vit: "facebook/dinov2-large"
   resnet: "microsoft/resnet-101"
-  toy_resnet: "checkpoints/class_spiral/ResNetMLP/20260117_145734/checkpoint_epoch_100.pt"
+  toy_resnet: "checkpoints/class_spiral/ResNetMLP/noise-0.075-multi_seed_5_runs"
+  # Add more seed checkpoints here
 
-visualization:
-  n_points: 5000
+layer_to_interpolate_toy_resnet: -2
+
+plateau_visualization:
+  n_points: 500
+  radius: 1.0
+  source_layer_idx: 'input'
+  target_layer_idx: 'last'  # -3 for the final layer of the ResNetMLP
+  point: [0.0, 0.0] # Of whose plateau to visualize
+  metric: "l2_norm"  # What metric to use to color each point in the source space, Options: ['l2_norm', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod']
+
   
+
 
 text: 
   shared_context: "The house was"
@@ -21,14 +31,15 @@ text:
 class_spiral:
   pairs:
     - [
-      [0, 0.5],
-      [-0.5, 0.5]
-      # one in green, one in blue. Boundary at x = -0.25
+      [0.375, 0.0],
+      [-0.375, 0.0]
+      # the first in blue, the second in green
+      # length = 0.75
     ]
     - [
-      [0, 0.5],
-      [0.5, 0.5]
-      # both green
+      [0.375, 0.25],
+      [0.375, -0.50] 
+      # both blue
     ]
   
 

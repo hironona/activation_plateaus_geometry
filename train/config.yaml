@@ -1,24 +1,29 @@
 model:
   input_dim: 2
-  output_dim: 3 # for classification, this should match num_classes 
+  output_dim: 1 # for classification, this should match num_classes. When num_classes=2, we can use output_dim=1 with sigmoid activation. For num_classes>2, use output_dim=num_classes with softmax.
   hidden_dim: 16
   resblock_width: 16
-  num_blocks: 30
+  num_blocks: 20
   dropout: 0.0
 
 model_type: "ResNetMLP" # Options: "ResNetMLP", "ResNetMLPSkeleton"
 
 training:
-  batch_size: 64
-  learning_rate: 0.001
-  epochs: 100
+  batch_size: 32
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  epochs: 50
+  save_every: 25
+  seed: 0
   checkpoint_dir: "./checkpoints"
-  save_every: 10
-  seed: 42
+  checkpoint_name: "noise-0.1" # e.g. "noise-0.00-multi_seed_5_runs"
+  checkpoint_description: "std=0.1, num_samples=10000, shuffle=True, lr=1e-4, weight_decay=0.01, epochs=50, batch_size=32, seed=0"
+  n_runs: 5
 
 task:
   name: "class_spiral" # Options: "reg_sine_wave", "class_spiral"
   num_samples: 10000
-  noise_std: 0.0
-  num_classes: 3
+  noise_std: 0.1
+  num_classes: 2
   distribution: "normal" # Options: "uniform", "normal"
+  shuffle_per_epoch: True

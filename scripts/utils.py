@@ -15,6 +15,7 @@ from typing import List, Dict, Union
 from PIL import Image
 import requests
 from io import BytesIO
+from pathlib import Path
 
 import sys
 sys.path.append('./train')
@@ -26,6 +27,14 @@ NO_LAYERNORM_MODELS = {
     "gpt2-medium_LNFree": "schaeff/gpt2-medium_LNFree500", 
     "gpt2-large_LNFree": "schaeff/gpt2-large_LNFree600",
     "gpt2-xl_LNFree": "schaeff/gpt2-xl_LNFree800"
+}
+
+LAYER_ARGUMENT_IDX_MAPPING = {
+    'toy_resnet': {
+        'logits': 'logits',
+        'input': -2,
+        'embed': -1
+    },
 }
 
 def load_gpt2_regular(model_name):
@@ -177,6 +186,7 @@ def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     """
     Spherical linear interpolation with norm rescaling.
     Interpolates angle evenly, interpolates magnitude linearly.
+    Falls back to linear interpolation for (anti)parallel vectors.
     """
     # Get norms for rescaling
     norm_v0 = torch.norm(v0, dim=-1, keepdim=True)
@@ -193,6 +203,14 @@ def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
 
     # SLERP computation
     sin_theta = torch.sin(theta)
+
+    # Fall back to plain linear interpolation (no norm rescaling) when
+    # vectors are nearly parallel or antiparallel. linear_rescale would
+    # snap to endpoints for antiparallel vectors due to norm rescaling;
+    # plain lerp traces a smooth path through intermediate points.
+    if sin_theta.abs().min().item() < 1e-6:
+        return (1 - t) * v0 + t * v1
+
     weight_v0 = torch.sin((1 - t) * theta) / sin_theta
     weight_v1 = torch.sin(t * theta) / sin_theta
     slerp_result = weight_v0 * v0_norm + weight_v1 * v1_norm
@@ -201,7 +219,10 @@ def slerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     target_norm = (1 - t) * norm_v0 + t * norm_v1
     return slerp_result * target_norm
 
-def linear_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
+def plain_lerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
+    return (1 - t) * v0 + t * v1
+
+def lerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
     """
     Linear interpolation with norm rescaling.
     Interpolates both angle and magnitude linearly.
@@ -247,6 +268,44 @@ def load_config(config_path: str = "./scripts/config.yaml") -> Dict:
     """Load configuration from yaml file."""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
+
+
+def get_model_name(config: Dict, model_type: str) -> str:
+    """Get a single model name/path from config. Returns first element if list, string if string."""
+    val = config['model_names'][model_type]
+    if isinstance(val, list):
+        return val[0]
+    return val
+
+def _find_latest_checkpoint(directory: str) -> str:
+    """Find the latest checkpoint file in a directory."""
+    checkpoint_files = [f for f in os.listdir(directory) if f.startswith("checkpoint_epoch_") and f.endswith(".pt")]
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoint files found in directory: {directory}")
+    
+    # Extract epoch numbers and find the latest
+    def extract_epoch(filename):
+        try:
+            return int(filename.split("checkpoint_epoch_")[1].split(".pt")[0])
+        except:
+            return -1  # In case of unexpected filename format
+
+    latest_checkpoint = max(checkpoint_files, key=extract_epoch)
+    return os.path.join(directory, latest_checkpoint)
+
+def get_model_names(config: Dict, model_type: str) -> List[str]:
+    """Get all model names/paths from config as a list. Always returns a list."""
+    val = config['model_names'][model_type]
+    if isinstance(val, list):
+        return val
+    elif isinstance(val, str):
+        path = Path(val)
+        if path.is_file() and path.suffix == ".pt":
+            return [val]
+        else: # when given a directory, return all .pt files in that directory
+            return [_find_latest_checkpoint(os.path.join(val, timestamp)) for timestamp in os.listdir(val)]
+    else:
+        raise ValueError(f"Invalid model name format for {model_type}: {val}")
     
 def load_image(image_path:str) -> Image.Image:
     """Load an image from the specified path."""
@@ -293,6 +352,50 @@ def compute_relative_distances(activations: torch.Tensor) -> List[float]:
     return relative_distances
 
 
+def aggregate_metric_data(
+    all_seeds_data: List[Dict[str, Union[Dict[str, torch.Tensor], torch.Tensor]]],
+    confidence_level: float = 0.95
+) -> tuple:
+    """Aggregate plot_data dicts across seeds into mean and std dicts.
+
+    Handles both multi-layer format {pair: {layer: tensor}} and
+    single-line format {pair: tensor}.
+    
+        Args:
+        all_seeds_data: List of plot_data dicts from different seeds, each with the same structure.
+        confidence_level: Confidence level for standard deviation calculation (default: 0.95).
+
+    Returns:
+        (mean_dict, std_dict) with the same structure as each input dict.
+    """
+    mean_dict = {}
+    std_dict = {}
+    # Use first seed as reference for keys
+    ref = all_seeds_data[0]
+    for pair_key in ref:
+        sample = ref[pair_key]
+        if isinstance(sample, dict):
+            # Multi-layer: {layer_key: tensor}
+            mean_layers = {}
+            std_layers = {}
+            for layer_key in sample:
+                stacked = torch.stack([seed[pair_key][layer_key] for seed in all_seeds_data])
+                mean_layers[layer_key] = stacked.mean(dim=0)
+                stds = stacked.std(dim=0)
+                n = stacked.shape[0]
+                std_layers[layer_key] = stds * confidence_level / np.sqrt(n)
+            mean_dict[pair_key] = mean_layers
+            std_dict[pair_key] = std_layers
+        else:
+            # Single tensor
+            stacked = torch.stack([seed[pair_key] for seed in all_seeds_data])
+            mean_dict[pair_key] = stacked.mean(dim=0)
+            stds = stacked.std(dim=0)
+            n = stacked.shape[0]
+            std_dict[pair_key] = stds * confidence_level / np.sqrt(n)
+    return mean_dict, std_dict
+
+
 def generate_interpolation_results_plot(
     data_dict: Dict[str, Union[Dict[str, torch.Tensor], torch.Tensor]],
     suptitle: str,
@@ -302,7 +405,9 @@ def generate_interpolation_results_plot(
     shared_id: str,
     pairs_ids: List[List[str]],
     alpha_range: List[float] = [0, 1],
-    skip_interpolation_layer: bool = True
+    skip_interpolation_layer: bool = True,
+    std_dict: Dict[str, Union[Dict[str, torch.Tensor], torch.Tensor]] = None,
+    y_floor: float = None
 ) -> None:
     """
     Generate standardized interpolation results plot with two subplots.
@@ -355,13 +460,35 @@ def generate_interpolation_results_plot(
                         label = layer_key
 
                 ax.plot(alphas, layer_data, alpha=0.8, color=colors[j], linewidth=1, label=label)
-                y_min = min(y_min, layer_data.min().item())
-                y_max = max(y_max, layer_data.max().item())
+                if std_dict is not None:
+                    std_data_layer = std_dict[token_key][layer_key]
+                    lower = layer_data - std_data_layer
+                    upper = layer_data + std_data_layer
+                    if y_floor is not None:
+                        lower = torch.clamp(lower, min=y_floor)
+                    ax.fill_between(alphas, lower, upper,
+                                    alpha=0.15, color=colors[j])
+                    y_min = min(y_min, lower.min().item())
+                    y_max = max(y_max, upper.max().item())
+                else:
+                    y_min = min(y_min, layer_data.min().item())
+                    y_max = max(y_max, layer_data.max().item())
         else:
             # Single-line plot
             ax.plot(alphas, data, color='#2C2C2C', linewidth=2, alpha=0.9)
-            y_min = min(y_min, data.min().item())
-            y_max = max(y_max, data.max().item())
+            if std_dict is not None:
+                std_data_single = std_dict[token_key]
+                lower = data - std_data_single
+                upper = data + std_data_single
+                if y_floor is not None:
+                    lower = torch.clamp(lower, min=y_floor)
+                ax.fill_between(alphas, lower, upper,
+                                alpha=0.15, color='#2C2C2C')
+                y_min = min(y_min, lower.min().item())
+                y_max = max(y_max, upper.max().item())
+            else:
+                y_min = min(y_min, data.min().item())
+                y_max = max(y_max, data.max().item())
 
         # Reference lines and labels
         ax.axvline(x=0, color='gray', linestyle='--', alpha=0.8, linewidth=1.5)

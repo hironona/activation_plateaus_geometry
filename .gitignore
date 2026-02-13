@@ -29,3 +29,7 @@ __pycache__/
 *.swp
 *.swo
 *~
+
+# Claude
+CLAUDE.md
+.claude/

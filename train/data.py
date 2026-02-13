@@ -8,23 +8,35 @@ class ToyDataset(Dataset):
     Synthetic dataset for toy regression tasks.
     Generates data on-the-fly (or pre-generated in memory) for consistency.
     """
-    def __init__(self, task_name: str, num_samples: int = 10000, noise_std: float = 0.05, num_classes: int = 3, distribution: str = 'uniform'):
+    def __init__(self, task_name: str, num_samples: int = 10000, noise_std: float = 0.05, num_classes: int = 3, distribution: str = 'uniform', seed=0):
         self.task_name = task_name
         self.num_samples = num_samples
         self.noise_std = noise_std
         self.num_classes = num_classes
         self.distribution = distribution
+        self.seed = seed
 
+        self.shuffle_count = 0
 
         self.data, self.targets = self._generate_data()
+    
+    def shuffle(self):
+        """Shuffle the dataset by incrementing the shuffle count."""
+        self.shuffle_count += 1
+        self.data, self.targets = self._generate_data()
+    
+    def _sample(self):
+        # reset seed for each shuffle
+        rng = np.random.default_rng(self.seed + self.shuffle_count * 1000)
 
-    def _generate_data(self):
         # Generate 2D inputs in range [-1, 1]
         if self.distribution == 'uniform':
-            X = np.random.uniform(-1, 1, size=(self.num_samples, 2)).astype(np.float32)
+            X = rng.uniform(-1, 1, size=(self.num_samples, 2)).astype(np.float32)
         elif self.distribution == 'normal':
-            X = np.random.normal(0, 1, size=(self.num_samples, 2)).astype(np.float32)
-        
+            X = rng.normal(0, 1, size=(self.num_samples, 2)).astype(np.float32)
+        return X
+
+    def _get_y(self, X):
         if self.task_name == "reg_sine_wave":
             # Task: f(x1, x2) = {sin(x1) + cos(x2)} * INDICATOR(x1 < 0)
             # Hamayun et al. (2024): https://arxiv.org/pdf/2402.15555
@@ -57,10 +69,16 @@ class ToyDataset(Dataset):
         else:
             raise ValueError(f"Unknown task: {self.task_name}")
 
+        return y.astype(np.float32)
+
+    def _generate_data(self):
+        X = self._sample()
+        y = self._get_y(X)
+        
         # Add some small Gaussian noise to the inputs
         X += np.random.normal(0, self.noise_std, size=X.shape)
 
-        return torch.from_numpy(X), torch.from_numpy(y.astype(np.float32))
+        return torch.from_numpy(X), torch.from_numpy(y)
 
     def __len__(self):
         return self.num_samples
@@ -71,7 +89,7 @@ class ToyDataset(Dataset):
 def visualize_dataset():
     print("Generating Spiral Dataset...")
     num_classes = 2
-    dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=num_classes, noise_std=0)
+    dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=num_classes, noise_std=0.05)
     X = dataset.data.numpy()
     y = dataset.targets.numpy()
 

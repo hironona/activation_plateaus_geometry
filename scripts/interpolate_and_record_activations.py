@@ -25,7 +25,7 @@ from PIL import Image
 import sys
 sys.path.append('./scripts')
 sys.path.append('./train')
-from utils import load_model, load_config, load_image, slerp_rescale, linear_rescale, construct_filepath, get_n_layers_from_model, load_model_from_checkpoint
+from utils import load_model, load_config, load_image, slerp_rescale, lerp_rescale, construct_filepath, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names
 
 from model import ResNetMLP, ResNetMLPSkeleton
 
@@ -168,10 +168,10 @@ def collect_original_activations_toy_resnet(model: Union[ResNetMLP, ResNetMLPSke
     # Forward pass
     model.eval()
     with torch.no_grad():
-        outputs = model(inputs)
+        logits = model(inputs)
     
     # Clean up
-    del inputs, outputs
+    del inputs, logits
     torch.cuda.empty_cache()
 
     for hook in hooks:
@@ -524,9 +524,9 @@ def interpolate_toy_resnet_layer(
     resid_b_device = resid_b.to(device)
     alphas = torch.linspace(0, 1, n_steps, device=device)
     
-    # LINEAR INTERPOLATION
+    # SLERP interpolation (falls back to plain lerp for antiparallel vectors)
     interpolated_activations = torch.stack([
-        linear_rescale(resid_a_device, resid_b_device, alpha.item()).squeeze(0)
+        slerp_rescale(resid_a_device, resid_b_device, alpha.item()).squeeze(0)
         for alpha in alphas
     ])  # [n_steps, hidden_dim]
     
@@ -821,36 +821,25 @@ def interpolate_layer_wrapper(model_type: str, **kwargs) -> Dict[str, torch.Tens
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-def main():
-    parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
-    parser.add_argument('--freeze_attention', action='store_true', help='Freeze attention outputs to first step')
-    parser.add_argument('--freeze_mlp', action='store_true', help='Freeze MLP outputs to first step')
-    parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
+def run_for_single_model(args, config, model_name):
+    """Run activation recording for a single model checkpoint."""
+    N_STEPS = config['n_steps']
 
-    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
-    parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image)')
-
-    args = parser.parse_args()
-
-    MODEL_NAME = config['model_names'][args.model_type]
-
-    # if model type is vit, choose the model set default in config
-
-    print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
+    print(f"Model: {model_name} | Steps: {N_STEPS}")
     print(f"Freeze attention: {args.freeze_attention} | Freeze MLP: {args.freeze_mlp}")
-    
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if args.model_type == 'toy_resnet':
-        model, _ = load_model_from_checkpoint(MODEL_NAME)
+        model, _ = load_model_from_checkpoint(model_name)
         n_layers = len(model.blocks)
     else:
-        model = load_model(MODEL_NAME)
+        model = load_model(model_name)
         n_layers = get_n_layers_from_model(model)
 
     model = model.to(device)
     print(f"Loaded {n_layers}-layer model on {device}")
 
-    output_dir = f"./activations/{MODEL_NAME}"
+    output_dir = f"./activations/{model_name}"
     os.makedirs(output_dir, exist_ok=True)
 
     # configure parameters in advance for convenience
@@ -884,7 +873,7 @@ def main():
     elif args.data_type == 'image':
         SHARED_IMAGE = config["image"]["shared_image"]
         PAIRS = config['image']['image_pairs']
-        processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+        processor = AutoImageProcessor.from_pretrained(model_name)
         params_collect = {
             'model': model,
             'processor': processor,
@@ -956,14 +945,14 @@ def main():
             else:
                 layer_to_interpolate = 0
             pbar = tqdm([layer_to_interpolate], desc=f"Interpolating {pair}{freeze_suffix}")
-        else:   
+        else:
             if args.model_type == 'toy_resnet':
                 pbar = tqdm(range(-2, n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
             else:
                 pbar = tqdm(range(n_layers), desc=f"Interpolating {pair}{freeze_suffix}")
 
         for interpolation_layer in pbar:
-            
+
             params_interpolate['resid_post_a'] = reference_activations['token_0']
             params_interpolate['resid_post_b'] = reference_activations['token_1']
             params_interpolate['interpolation_layer'] = interpolation_layer
@@ -976,8 +965,30 @@ def main():
             )
 
             # Save to disk
-            filepath = construct_filepath(MODEL_NAME, SHARED_ID, interpolation_layer, PAIRS_IDS[i], N_STEPS, freeze_suffix)
+            filepath = construct_filepath(model_name, SHARED_ID, interpolation_layer, PAIRS_IDS[i], N_STEPS, freeze_suffix)
             torch.save(interpolated_activations, filepath)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Interpolate activations between token pairs')
+    parser.add_argument('--freeze_attention', action='store_true', help='Freeze attention outputs to first step')
+    parser.add_argument('--freeze_mlp', action='store_true', help='Freeze MLP outputs to first step')
+    parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
+
+    parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use (hooked_transformer or vit)')
+    parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image)')
+
+    args = parser.parse_args()
+
+    if args.model_type == 'toy_resnet':
+        model_names = get_model_names(config, args.model_type)
+        print(model_names)
+        for idx, model_name in enumerate(model_names):
+            print(f"\n=== Seed {idx + 1}/{len(model_names)}: {model_name} ===")
+            run_for_single_model(args, config, model_name)
+    else:
+        model_name = get_model_name(config, args.model_type)
+        run_for_single_model(args, config, model_name)
 
     print("\n=== Complete ===")
 

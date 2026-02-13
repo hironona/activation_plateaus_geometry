@@ -14,16 +14,14 @@ import os
 from typing import Dict, List
 import sys
 sys.path.append('./scripts')
-from utils import load_activations, load_config, get_n_layers, compute_relative_distances, generate_interpolation_results_plot, construct_filepath
+from utils import load_activations, load_config, get_n_layers, compute_relative_distances, generate_interpolation_results_plot, construct_filepath, get_model_name, get_model_names, aggregate_metric_data
 
 config = load_config()
 N_STEPS = config['n_steps']
 
 
-def variant1_interpolate_layer0(shared_id, pairs_ids, model_name, layer_to_interpolate):
-    """Variant 1: Interpolate in layer 0, record in all subsequent layers."""
-    print(f"\nVariant 1: Interpolate in layer {layer_to_interpolate}, record in all layers")
-
+def variant1_compute(shared_id, pairs_ids, model_name, layer_to_interpolate):
+    """Variant 1: Compute data - Interpolate in layer 0, record in all subsequent layers."""
     plot_data = {}
     for pair_ids in pairs_ids:
         activations = load_activations(model_name, shared_id, layer_to_interpolate, pair_ids, N_STEPS)
@@ -34,27 +32,36 @@ def variant1_interpolate_layer0(shared_id, pairs_ids, model_name, layer_to_inter
                 layer_idx = int(key.split('_')[0].replace('layer', ''))
                 layer_dict[f"Layer {layer_idx}"] = torch.tensor(compute_relative_distances(layer_activations))
         plot_data[pair_name] = layer_dict
+    return plot_data
 
+
+def variant1_plot(plot_data, shared_id, pairs_ids, output_dir, layer_to_interpolate, std_dict=None):
+    """Variant 1: Plot - Interpolate in layer 0, record in all subsequent layers."""
     generate_interpolation_results_plot(
         data_dict=plot_data,
         suptitle=f"Relative Distances (Interpolate in Layer {layer_to_interpolate})",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"./plots/{model_name}/relative_distances_layerwise_layer{layer_to_interpolate}_interpolation.png",
+        output_path=f"{output_dir}/relative_distances_layerwise_layer{layer_to_interpolate}_interpolation.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
         alpha_range=[0, 1],
-        skip_interpolation_layer=True
+        skip_interpolation_layer=True,
+        std_dict=std_dict
     )
 
 
-def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids, model_name):
-    """Variant 2: Interpolate in each layer, record in last layer only."""
-    print("\nVariant 2: Interpolate in each layer, record in last layer")
+def variant1_interpolate_layer0(shared_id, pairs_ids, model_name, layer_to_interpolate):
+    """Variant 1: Interpolate in layer 0, record in all subsequent layers."""
+    print(f"\nVariant 1: Interpolate in layer {layer_to_interpolate}, record in all layers")
+    plot_data = variant1_compute(shared_id, pairs_ids, model_name, layer_to_interpolate)
+    variant1_plot(plot_data, shared_id, pairs_ids, f"./plots/{model_name}", layer_to_interpolate)
 
+
+def variant2_compute(n_layers, shared_id, pairs_ids, model_name):
+    """Variant 2: Compute data - Interpolate in each layer, record in last layer only."""
     last_layer_key = f'layer{n_layers - 1}_resid_post'
     plot_data = {}
-
     for pair_idx, pair_ids in enumerate(pairs_ids):
         pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
         layer_dict = {}
@@ -63,17 +70,60 @@ def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids, model_name):
             distances = compute_relative_distances(activations[last_layer_key])
             layer_dict[f"Layer {interpolation_layer}"] = torch.tensor(distances)
         plot_data[pair_name] = layer_dict
+    return plot_data
 
+
+def variant2_plot(plot_data, shared_id, pairs_ids, output_dir, std_dict=None):
+    """Variant 2: Plot - Interpolate in each layer, record in last layer only."""
     generate_interpolation_results_plot(
         data_dict=plot_data,
         suptitle="Relative Distances (Record in Last Layer)",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"./plots/{model_name}/relative_distances_layerwise_last_layer_recording.png",
+        output_path=f"{output_dir}/relative_distances_layerwise_last_layer_recording.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
         alpha_range=[0, 1],
-        skip_interpolation_layer=True
+        skip_interpolation_layer=True,
+        std_dict=std_dict
+    )
+
+
+def variant2_record_last_layer(n_layers: int, shared_id, pairs_ids, model_name):
+    """Variant 2: Interpolate in each layer, record in last layer only."""
+    print("\nVariant 2: Interpolate in each layer, record in last layer")
+    plot_data = variant2_compute(n_layers, shared_id, pairs_ids, model_name)
+    variant2_plot(plot_data, shared_id, pairs_ids, f"./plots/{model_name}")
+
+
+def variant3_compute(n_layers, shared_id, pairs_ids, model_name, N):
+    """Variant 3: Compute data - Interpolate in layer i, record in layer i+N."""
+    plot_data = {}
+    for pair_ids in pairs_ids:
+        pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
+        layer_dict = {}
+        for interpolation_layer in range(n_layers - N):
+            activations = load_activations(model_name, shared_id, interpolation_layer, pair_ids, N_STEPS)
+            target_layer_key = f'layer{interpolation_layer + N}_resid_post'
+            distances = compute_relative_distances(activations[target_layer_key])
+            layer_dict[f"Layer {interpolation_layer}"] = torch.tensor(distances)
+        plot_data[pair_name] = layer_dict
+    return plot_data
+
+
+def variant3_plot(plot_data, shared_id, pairs_ids, output_dir, N, std_dict=None):
+    """Variant 3: Plot - Interpolate in layer i, record in layer i+N."""
+    generate_interpolation_results_plot(
+        data_dict=plot_data,
+        suptitle=f"Relative Distances (N={N})",
+        ylabel="Relative Distance to Token A (0) vs Token B (1)",
+        output_path=f"{output_dir}/relative_distances_layerwise_N{N}.png",
+        n_steps=N_STEPS,
+        shared_id=shared_id,
+        pairs_ids=pairs_ids,
+        alpha_range=[0, 1],
+        skip_interpolation_layer=True,
+        std_dict=std_dict
     )
 
 
@@ -83,29 +133,8 @@ def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids, model_name
 
     for N in [1, 4, 8, 16, 24]:
         print(f"  Processing N={N}...")
-
-        plot_data = {}
-        for pair_ids in pairs_ids:
-            pair_name = f"{pair_ids[0]}_{pair_ids[1]}"
-            layer_dict = {}
-            for interpolation_layer in range(n_layers - N):
-                activations = load_activations(model_name, shared_id, interpolation_layer, pair_ids, N_STEPS)
-                target_layer_key = f'layer{interpolation_layer + N}_resid_post'
-                distances = compute_relative_distances(activations[target_layer_key])
-                layer_dict[f"Layer {interpolation_layer}"] = torch.tensor(distances)
-            plot_data[pair_name] = layer_dict
-
-        generate_interpolation_results_plot(
-            data_dict=plot_data,
-            suptitle=f"Relative Distances (N={N})",
-            ylabel="Relative Distance to Token A (0) vs Token B (1)",
-            output_path=f"./plots/{model_name}/relative_distances_layerwise_N{N}.png",
-            n_steps=N_STEPS,
-            shared_id=shared_id,
-            pairs_ids=pairs_ids,
-            alpha_range=[0, 1],
-            skip_interpolation_layer=True
-        )
+        plot_data = variant3_compute(n_layers, shared_id, pairs_ids, model_name, N)
+        variant3_plot(plot_data, shared_id, pairs_ids, f"./plots/{model_name}", N)
 
 
 def main():
@@ -113,10 +142,11 @@ def main():
     parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use (hooked_transformer or vit or resnet or toy_resnet)')
     parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image or class_spiral)')
     parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
+    parser.add_argument('--multi_seed', action='store_true', help='Aggregate across multiple seeds (toy_resnet only)')
 
     args = parser.parse_args()
 
-    MODEL_NAME = config['model_names'][args.model_type]
+    MODEL_NAME = get_model_name(config, args.model_type)
 
     if args.data_type == 'image':
         SHARED_ID = config['image']['shared_image_id']
@@ -134,28 +164,67 @@ def main():
     elif args.model_type in ['resnet']:
         layer_to_interpolate = 1
     elif args.model_type in ['toy_resnet']:
-        layer_to_interpolate = -1
+        layer_to_interpolate = config['layer_to_interpolate_toy_resnet']
     else:
         layer_to_interpolate = 0
 
-    print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
+    if args.multi_seed:
+        assert args.model_type == 'toy_resnet', "--multi_seed is only supported for toy_resnet"
+        model_names = get_model_names(config, args.model_type)
+        print(f"Multi-seed mode: {len(model_names)} seeds | Steps: {N_STEPS}")
+        output_dir = f"./plots/{MODEL_NAME}"
 
-    # Check if data exists
-    if not os.path.exists(construct_filepath(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)):
-        print("Data not found, skipping")
-        return
+        # Variant 1
+        print(f"\nVariant 1: Interpolate in layer {layer_to_interpolate}, record in all layers")
+        all_v1 = []
+        for idx, mn in enumerate(model_names):
+            print(f"  Seed {idx + 1}/{len(model_names)}: {mn}")
+            all_v1.append(variant1_compute(SHARED_ID, PAIRS_IDS, mn, layer_to_interpolate))
+        mean_v1, std_v1 = aggregate_metric_data(all_v1)
+        variant1_plot(mean_v1, SHARED_ID, PAIRS_IDS, output_dir, layer_to_interpolate, std_dict=std_v1)
 
-    os.makedirs(f"./plots/{MODEL_NAME}", exist_ok=True)
+        if not args.interpolate_only_first_layer:
+            # Get n_layers from first seed
+            activations = load_activations(model_names[0], SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)
+            n_layers = get_n_layers(activations)
 
-    activations = load_activations(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)
-    n_layers = get_n_layers(activations)
-    print(f"Model has {n_layers} layers")
+            # Variant 2
+            print("\nVariant 2: Interpolate in each layer, record in last layer")
+            all_v2 = []
+            for idx, mn in enumerate(model_names):
+                print(f"  Seed {idx + 1}/{len(model_names)}: {mn}")
+                all_v2.append(variant2_compute(n_layers, SHARED_ID, PAIRS_IDS, mn))
+            mean_v2, std_v2 = aggregate_metric_data(all_v2)
+            variant2_plot(mean_v2, SHARED_ID, PAIRS_IDS, output_dir, std_dict=std_v2)
 
-    variant1_interpolate_layer0(SHARED_ID, PAIRS_IDS, MODEL_NAME, layer_to_interpolate)
-    
-    if not args.interpolate_only_first_layer:
-        variant2_record_last_layer(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)
-        variant3_record_layer_plus_n(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)
+            # Variant 3
+            print("\nVariant 3: Interpolate in layer i, record in layer i+N")
+            for N in [1, 4, 8, 16, 24]:
+                print(f"  Processing N={N}...")
+                all_v3 = []
+                for mn in model_names:
+                    all_v3.append(variant3_compute(n_layers, SHARED_ID, PAIRS_IDS, mn, N))
+                mean_v3, std_v3 = aggregate_metric_data(all_v3)
+                variant3_plot(mean_v3, SHARED_ID, PAIRS_IDS, output_dir, N, std_dict=std_v3)
+    else:
+        print(f"Model: {MODEL_NAME} | Steps: {N_STEPS}")
+
+        # Check if data exists
+        if not os.path.exists(construct_filepath(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)):
+            print("Data not found, skipping")
+            return
+
+        os.makedirs(f"./plots/{MODEL_NAME}", exist_ok=True)
+
+        activations = load_activations(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)
+        n_layers = get_n_layers(activations)
+        print(f"Model has {n_layers} layers")
+
+        variant1_interpolate_layer0(SHARED_ID, PAIRS_IDS, MODEL_NAME, layer_to_interpolate)
+
+        if not args.interpolate_only_first_layer:
+            variant2_record_last_layer(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)
+            variant3_record_layer_plus_n(n_layers, SHARED_ID, PAIRS_IDS, MODEL_NAME)
 
     print("\n=== Complete ===")
 

@@ -7,6 +7,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from datetime import datetime
+import numpy as np
 
 from model import ResNetMLP, ResNetMLPSkeleton
 from data import ToyDataset
@@ -17,20 +18,14 @@ def load_config(config_path):
 
 def set_seed(seed):
     torch.manual_seed(seed)
+    np.random.seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def main():
-    parser = argparse.ArgumentParser(description="Train ResNet MLP on Toy Tasks")
-    parser.add_argument("--config", type=str, default="train/config.yaml", help="Path to config file")
-    parser.add_argument("--dry_run", action="store_true", help="Run a single epoch for testing")
-    args = parser.parse_args()
-
-    # Load Config
-    config = load_config(args.config)
-    
+def train_single_model(config: dict):
     # Set Seed
-    set_seed(config['training']['seed'])
+    seed = config['training']['seed']
+    set_seed(seed)
 
     model_type = config['model_type']
 
@@ -45,7 +40,8 @@ def main():
     noise_std = config['task']['noise_std']
     num_classes = config['task']['num_classes']
     distribution = config['task']['distribution']
-    dataset = ToyDataset(task_name, num_samples, noise_std, num_classes, distribution)
+    shuffle_per_epoch = config['task']['shuffle_per_epoch']
+    dataset = ToyDataset(task_name, num_samples, noise_std, num_classes, distribution, seed=seed)
     dataloader = DataLoader(dataset, batch_size=config['training']['batch_size'], shuffle=True)
 
     classification = task_name.startswith("class")
@@ -74,7 +70,7 @@ def main():
         raise ValueError(f"Unknown model type: {model_type}")
 
     # Optimizer & Loss
-    optimizer = optim.Adam(model.parameters(), lr=config['training']['learning_rate'])
+    optimizer = optim.Adam(model.parameters(), lr=float(config['training']['learning_rate']))
     if classification and num_classes > 2:
         criterion = nn.CrossEntropyLoss()
     elif classification and num_classes == 2:
@@ -84,16 +80,21 @@ def main():
 
     # Directories
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    checkpoint_dir = f"{config['training']['checkpoint_dir']}/{task_name}/{model_type}/{timestamp}"
+    checkpoint_name = config['training']['checkpoint_name']
+    checkpoint_dir = f"{config['training']['checkpoint_dir']}/{task_name}/{model_type}/{checkpoint_name}/{timestamp}"
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     # Training Loop
-    epochs = 1 if args.dry_run else config['training']['epochs']
+    epochs = 1 if config.get('dry_run', False) else config['training']['epochs']
     print(f"Starting training for {epochs} epochs...")
 
     for epoch in range(1, epochs + 1):
         model.train()
         total_loss = 0.0
+
+        if shuffle_per_epoch:
+            dataset.shuffle()
+            dataloader = DataLoader(dataset, batch_size=config['training']['batch_size'], shuffle=True)
         
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{epochs}", leave=False)
         for inputs, targets in progress_bar:
@@ -128,7 +129,34 @@ def main():
     with open(os.path.join(checkpoint_dir, "config.yaml"), "w") as f:
         yaml.dump(config, f)
 
+    with open(os.path.join(checkpoint_dir, "description.txt"), "w") as f:
+        f.write(config['training']['checkpoint_description'])
+
     print("Training finished.")
+
+def main():
+    parser = argparse.ArgumentParser(description="Train ResNet MLP on Toy Tasks")
+    parser.add_argument("--config", type=str, default="train/config.yaml", help="Path to config file")
+    parser.add_argument("--dry_run", action="store_true", help="Run a single epoch for testing")
+    parser.add_argument("--multi_seed", action="store_true", help="Aggregate across multiple seeds (toy_resnet only)")
+    args = parser.parse_args()
+
+    # Load Config
+    config = load_config(args.config)
+    
+    seed = config['training']['seed']
+    n_runs = config['training']['n_runs']
+
+    if args.multi_seed:
+        config['training']['checkpoint_name'] += f"-multi_seed_{n_runs}_runs"
+        print(f"Running for {n_runs} runs...")
+        for seed in range(seed, seed + n_runs):
+            print(f"\n=== Training with seed {seed} ===")
+            config['training']['seed'] = seed
+            train_single_model(config)
+    else:
+        print(f"Running for a single run...")
+        train_single_model(config)
 
 if __name__ == "__main__":
     main()
