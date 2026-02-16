@@ -10,7 +10,7 @@ import os
 from tqdm import tqdm
 import sys
 import argparse
-sys.path.append('./scripts')
+sys.path.append('./vis_plots')
 from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model
 
 config = load_config()

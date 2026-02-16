@@ -11,7 +11,7 @@ import torch
 import os
 import sys
 from typing import Dict, List
-sys.path.append('./scripts')
+sys.path.append('./vis_plots')
 from utils import load_config, load_activations, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data
 
 config = load_config()

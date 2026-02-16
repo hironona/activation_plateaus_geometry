@@ -23,7 +23,7 @@ from transformers import ResNetForImageClassification
 
 from PIL import Image
 import sys
-sys.path.append('./scripts')
+sys.path.append('./vis_plots')
 sys.path.append('./train')
 from utils import load_model, load_config, load_image, slerp_rescale, lerp_rescale, construct_filepath, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names
 

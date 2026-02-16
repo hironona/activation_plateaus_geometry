@@ -1,4 +1,4 @@
-# Configuration for paper_analyses_v2 project
+# Configuration for plots
 
 n_steps: 50
 
@@ -10,17 +10,6 @@ model_names:
   # Add more seed checkpoints here
 
 layer_to_interpolate_toy_resnet: -2
-
-plateau_visualization:
-  n_points: 500
-  radius: 1.0
-  source_layer_idx: 'input'
-  target_layer_idx: 'last'  # -3 for the final layer of the ResNetMLP
-  point: [0.0, 0.0] # Of whose plateau to visualize
-  metric: "l2_norm"  # What metric to use to color each point in the source space, Options: ['l2_norm', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod']
-
-  
-
 
 text: 
   shared_context: "The house was"

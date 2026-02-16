@@ -89,28 +89,35 @@ class ToyDataset(Dataset):
 def visualize_dataset():
     print("Generating Spiral Dataset...")
     num_classes = 2
-    dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=num_classes, noise_std=0.05)
+    noise_std=0.05
+    dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=num_classes, noise_std=noise_std, seed=42)
     X = dataset.data.numpy()
     y = dataset.targets.numpy()
 
     # Create the plot
-    plt.figure(figsize=(8, 8))
+    plt.figure(figsize=(8, 8), dpi=300)
     
     # Scatter plot: Color points by class label
     scatter = plt.scatter(X[:, 0], X[:, 1], c=y, cmap='brg', s=5, alpha=0.6)
     
     # Aesthetics
-    plt.colorbar(scatter, label="Class Label")
+    # plt.colorbar(scatter, label="Class Label")
     plt.title(f"Twisted Spiral Task ({num_classes} Classes)\nManifold for ResNet Activation Analysis")
     plt.xlabel("$x_1$")
     plt.ylabel("$x_2$")
     plt.xlim(-1.1, 1.1)
     plt.ylim(-1.1, 1.1)
     plt.grid(True, linestyle='--', alpha=0.3)
+    plt.tight_layout()
     
-    # Show plot
-    print("Displaying plot...")
-    plt.show()
+    # # Show plot
+    # print("Displaying plot...")
+    # plt.show()
+
+    # Save the plot
+    plt.savefig(f"plots/spiral_dataset_{num_classes}classes_{noise_std}std.png")
+    print(f"Plot saved as 'plots/spiral_dataset_{num_classes}classes_{noise_std}std.png'.")
+
 
 if __name__ == "__main__":
     visualize_dataset()

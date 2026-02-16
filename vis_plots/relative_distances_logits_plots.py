@@ -10,7 +10,7 @@ import argparse
 import torch
 import os
 import sys
-sys.path.append('./scripts')
+sys.path.append('./vis_plots')
 from utils import load_activations, load_config, compute_relative_distances, construct_filepath, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data
 
 config = load_config()

@@ -147,8 +147,9 @@ def load_model(model_name):
 
 def load_model_from_checkpoint(checkpoint_path):
     checkpoint = torch.load(checkpoint_path)
-    model_config = checkpoint['config']['model']
-    model_type = checkpoint['config']['model_type']
+    full_config = checkpoint['config']
+    model_config = full_config['model']
+    model_type = full_config['model_type']
 
     if model_type == "ResNetMLP":
         model = ResNetMLP(**model_config)
@@ -159,7 +160,7 @@ def load_model_from_checkpoint(checkpoint_path):
 
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
-    return model, model_config
+    return model, model_config, full_config
 
 def get_n_layers_from_model(model):
     """Get number of layers from a model, handling both HookedTransformer and ViT models."""
@@ -264,7 +265,7 @@ def load_activations(model_name: str, shared_id: str, interpolation_layer: int, 
     return torch.load(filepath, map_location='cpu')
 
 
-def load_config(config_path: str = "./scripts/config.yaml") -> Dict:
+def load_config(config_path: str = "./vis_plots/config.yaml") -> Dict:
     """Load configuration from yaml file."""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
