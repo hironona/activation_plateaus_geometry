@@ -351,6 +351,7 @@ def main():
     parser = argparse.ArgumentParser(description='Visualize activation plateaus')
     parser.add_argument('--model_type', type=str, choices=['hooked_transformer', 'vit', 'resnet', 'toy_resnet'], required=True, help='Type of model to use')
     parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data to use')
+    parser.add_argument('--model_path', type=str, help='Path to model checkpoint or directory')
     parser.add_argument('--multi_seed', action='store_true', help='Average metric across all seed checkpoints (toy_resnet only)')
 
     args = parser.parse_args()
@@ -358,6 +359,8 @@ def main():
     model_type = args.model_type
 
     # Load config values
+    if args.model_path:
+        config['model_names'][model_type] = args.model_path
     model_paths = get_model_names(config, model_type)
     MODEL_NAME  = get_model_name(config, model_type)
 
