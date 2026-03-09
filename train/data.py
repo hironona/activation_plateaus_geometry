@@ -89,7 +89,7 @@ class ToyDataset(Dataset):
 def visualize_dataset():
     print("Generating Spiral Dataset...")
     num_classes = 2
-    noise_std=0.05
+    noise_std=0.00
     dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=num_classes, noise_std=noise_std, seed=42)
     X = dataset.data.numpy()
     y = dataset.targets.numpy()

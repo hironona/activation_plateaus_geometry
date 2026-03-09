@@ -3,9 +3,10 @@ radius: 1.0
 # -2 for input space, -1 for embedding space, and non-negative integer for resid_post activations before that layer
 source_layer_idx: 4
 target_layer_idx: 'logits'
-reference_point: [0.0, 0.0] # Of whose plateau to visualize. Necessary for L2_norm metric.
-metric: "jacobian_determinant_full"  # What metric to use to color each point in the source space, Options: ['l2_norm', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod']
+reference_point: [0.25, 0.0] # Of whose plateau to visualize. Necessary for L2_norm metric.
+metric: "jacobian_norm_full"  # What metric to use to color each point in the source space, Options: ['l2_norm', 'jacobian_norm_full', 'jacobian_norm_layerwise_prod', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod']
 n_pca_components: 3  # Number of PCA components when source dim > this value. Options: 2 or 3
+log_scale: True  # Whether to use log scale for the metric values when coloring the points
 
 model_names:
-  toy_resnet: "checkpoints/class_spiral/ResNetMLP/noise-0.025-multi_seed_5_runs"
+  toy_resnet: "checkpoints/class_spiral/ResNetMLP/noise-0.00-multi_seed_5_runs"

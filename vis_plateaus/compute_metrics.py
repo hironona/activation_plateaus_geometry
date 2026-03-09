@@ -126,7 +126,7 @@ def compute_jacobian_determinant(jacobians: torch.Tensor):
     dets = dets.view(*dims_batch)
     return dets
 
-def compute_frobenius_norm(jacobians: torch.Tensor):
+def compute_frobenius_norm(jacobians: torch.Tensor) -> torch.Tensor:
     """
     Compute the Frobenius norm of a batch of Jacobian matrices.
     Args:
@@ -134,14 +134,11 @@ def compute_frobenius_norm(jacobians: torch.Tensor):
     Returns:
         Tensor of shape (...) containing the Frobenius norm of each Jacobian matrix
     """
-    dims = jacobians.shape[-2:]
     dims_batch = jacobians.shape[:-2]
     jacobians = jacobians.view(*dims_batch, -1)
-    frob_norms = torch.norm(jacobians, dim=-1)  # (dims_batch...)
-    return frob_norms
+    return torch.norm(jacobians, dim=-1)  # (dims_batch...)
 
-
-def compute_volume_change_to_logits(model: Union[ResNetMLP, ResNetMLPSkeleton], data: torch.Tensor, device: str) -> torch.Tensor:
+def compute_jacobian_to_logits(model: Union[ResNetMLP, ResNetMLPSkeleton], data: torch.Tensor) -> torch.Tensor:
     """
     Compute the product of singular values of the Jacobian from last block's resid_post to logits.
     Handles the non-square mapping: final_norm -> relu -> output_layer.
@@ -149,12 +146,11 @@ def compute_volume_change_to_logits(model: Union[ResNetMLP, ResNetMLPSkeleton], 
     Args:
         model: Toy ResNet model
         data: Activations at the last block's resid_post. Shape: (n_points, hidden_dim)
-        device: target device
 
     Returns:
-        Tensor of shape (n_points,) containing the product of singular values per data point.
+        Tensor of shape (n_points, d_output, d_input) containing Jacobian matrices from last block to logits.
     """
-    norms = []
+    jacobians = []
 
     def forward_to_logits(resid):
         x = model.final_norm(resid.unsqueeze(0))
@@ -165,41 +161,47 @@ def compute_volume_change_to_logits(model: Union[ResNetMLP, ResNetMLPSkeleton], 
     jac_fn = torch.func.jacrev(forward_to_logits)
 
     for i in tqdm(range(data.shape[0]), desc="Computing last→logits Jacobian norms"):
-        j = jac_fn(data[i].to(device))
-        # svdvals = torch.linalg.svdvals(j)
-        frob_norms = torch.norm(j.flatten(), dim=0)  # Frobenius norm per output dimension
-        # norms.append(svdvals.prod().detach().cpu())
-        norms.append(frob_norms.detach().cpu())  # Product of Frobenius norms across output dimensions
-        del j
+        jac = jac_fn(data[i])
+        jacobians.append(jac.detach().cpu())
+        del jac
         torch.cuda.empty_cache()
 
-    return torch.stack(norms)  # (n_points,)
+    return torch.stack(jacobians)  # (n_points, d_output, d_input)
 
 
-def compute_volume_change_input_to_embed(model: Union[ResNetMLP, ResNetMLPSkeleton]) -> float:
+def compute_jacobian_input_to_embed(model: Union[ResNetMLP, ResNetMLPSkeleton], data: torch.Tensor) -> torch.Tensor:
     """
     Compute the product of singular values of the input_layer weight matrix.
     For ResNetMLPSkeleton (no input_layer / identity mapping), returns 1.0.
 
     Returns:
-        Scalar: product of singular values of input_layer.weight.
+        Tensor of shape (n_points, d_embed, d_input) containing Jacobian matrices.
     """
+    jacobians = []
     if hasattr(model, 'input_layer'):
-        with torch.no_grad():
-            # svdvals = torch.linalg.svdvals(model.input_layer.weight.float())
-            frob_norms = torch.norm(model.input_layer.weight.flatten())  # Frobenius norm per output dimension
-        # return frob_norms.prod().item()
-        return frob_norms.item()
-    return 1.0
+        
+        def forward_input_to_embed(x):
+            return model.input_layer(x)
+        
+        jacobian = torch.func.jacrev(forward_input_to_embed)
+        for i in tqdm(range(data.shape[0]), desc="Computing input→embed Jacobian norms"):
+            jac = jacobian(data[i])
+            jacobians.append(jac.detach().cpu())
+            del jac
+            torch.cuda.empty_cache()
+        return torch.stack(jacobians)  # (n_points, d_embed, d_input)
+    
+    else:
+        return torch.ones(data.shape[0], 1, 1)  # Identity mapping: Jacobian is 1. Shape: (n_points, 1, 1)
 
 
-def l2_norm_metric(model, reference_point, activations: Dict[str, torch.Tensor], source_layer_idx, target_layer_idx, device) -> Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]:
+def l2_norm_metric(model, reference_point_activation: Dict[str, torch.Tensor], activations: Dict[str, torch.Tensor], source_layer_idx, target_layer_idx, device) -> Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]:
     """
     Compute the L2 norm between a reference point's activation and a batch of data activations.
 
     Args:
         model: Toy ResNet model
-        reference_point: Tensor of shape (d_input,) — the reference point in raw input space.
+        reference_point_activation: Tensor of shape (d_target,) — the reference point's activation in target space.
         activations: Dictionary of layer activations for the data batch.
         source_layer_idx: source layer index (int).
         target_layer_idx: target layer index (int or 'logits').
@@ -209,22 +211,12 @@ def l2_norm_metric(model, reference_point, activations: Dict[str, torch.Tensor],
         Dict with 'reference_point_act', 'predicted_class', and 'metric_values'.
     """
     target_is_logits = (target_layer_idx == 'logits')
-    n_blocks = len(model.blocks)
-    effective_target = n_blocks - 1 if target_is_logits else target_layer_idx
     target_key = 'logits' if target_is_logits else f'layer{target_layer_idx}_resid_post'
 
-    point_activations = collect_activations_resid_post(
-        model,
-        reference_point.to(device).unsqueeze(0),
-        source_layer_idx=source_layer_idx,
-        target_layer_idx=effective_target,
-        device=device
-    )
-
-    point_act = point_activations[target_key]  # (1, d_target)
+    point_act = reference_point_activation[target_key]  # (1, d_target)
     data_act = activations[target_key]
 
-    predicted_class = point_activations['logits'].argmax(dim=1).item()
+    predicted_class = reference_point_activation['logits'].argmax(dim=1).item()
 
     results = {
         "reference_point_act": point_act,
@@ -233,6 +225,93 @@ def l2_norm_metric(model, reference_point, activations: Dict[str, torch.Tensor],
     }
 
     return results
+
+def jacobian_norm_metric(model, activations, source_layer_idx, target_layer_idx, device) -> dict:
+    """
+    Compute the full Jacobian determinant from source to target.
+    Handles non-square mappings (input→embed, last_block→logits) via singular value products.
+
+    Args:
+        model: Toy ResNet model
+        activations: Dictionary of layer activations for the data batch.
+        source_layer_idx: source layer index (int).
+        target_layer_idx: target layer index (int or 'logits').
+        device: target device.
+
+    Returns:
+        Dict with 'metric_values' tensor of shape (n_points,).
+    """
+    target_is_logits = (target_layer_idx == 'logits')
+    n_blocks = len(model.blocks)
+
+    # Determine effective bounds for the square Jacobian region
+    has_nonsquare_input = (source_layer_idx <= -1 and hasattr(model, 'input_layer'))
+    effective_source = -1 if has_nonsquare_input else source_layer_idx
+
+    # Full Jacobian convention: range(source, target) applies layers[source:target]
+    # To go through all blocks from embed: target = n_blocks
+    square_target = n_blocks if target_is_logits else target_layer_idx
+
+    data = activations[f'layer{effective_source}_resid_post']
+    jacobians = compute_jacobian_source_target_toy(model, data, effective_source, square_target, device)  # (n_points, d, d)
+
+    metric = compute_frobenius_norm(jacobians)  # (n_points,)
+
+    # Multiply by non-square volume changes
+    if has_nonsquare_input:
+        input_data = activations[f'layer{-2}_resid_post']
+        jacobians = compute_jacobian_input_to_embed(model, input_data)
+        metric = metric * compute_frobenius_norm(jacobians)
+
+    if target_is_logits:
+        last_block_data = activations[f'layer{n_blocks - 1}_resid_post']
+        jacobians = compute_jacobian_to_logits(model, last_block_data)
+        metric = metric * compute_frobenius_norm(jacobians)
+
+    return {"metric_values": metric}
+
+def jacobian_norm_layerwise_prod_metric(model, activations, source_layer_idx, target_layer_idx, device) -> dict:
+    """
+    Compute the product of layerwise Frobenius norms of Jacobians from source to target.
+    Handles non-square mappings (input→embed, last_block→logits) via singular value products.
+
+    Args:
+        model: Toy ResNet model
+        activations: Dictionary of layer activations for the data batch.
+        source_layer_idx: source layer index (int).
+        target_layer_idx: target layer index (int or 'logits').
+        device: target device.
+
+    Returns:
+        Dict with 'metric_values' tensor of shape (n_points,).
+    """
+    target_is_logits = (target_layer_idx == 'logits')
+    n_blocks = len(model.blocks)
+
+    has_nonsquare_input = (source_layer_idx <= -1 and hasattr(model, 'input_layer'))
+    effective_source = -1 if has_nonsquare_input else source_layer_idx
+
+    # Layerwise convention: range(source, target) with each step applying layers[idx+1]
+    square_target = n_blocks - 1 if target_is_logits else target_layer_idx
+
+    jacobians = compute_jacobian_source_target_layerwise_toy(model, effective_source, square_target, device, activations)  # (n_mid_layers, n_points, d, d)
+
+    # det = compute_jacobian_determinant(jacobians)  # (n_mid_layers, n_points)
+    frob_norms = compute_frobenius_norm(jacobians)  # (n_mid_layers, n_points)
+    metric = torch.prod(frob_norms, dim=0)  # (n_points,)
+
+    # Multiply by non-square volume changes
+    if has_nonsquare_input:
+        input_data = activations[f'layer{-2}_resid_post']
+        jacobians = compute_jacobian_input_to_embed(model, input_data)
+        metric = metric * compute_frobenius_norm(jacobians)
+
+    if target_is_logits:
+        last_block_data = activations[f'layer{n_blocks - 1}_resid_post']
+        jacobians = compute_jacobian_to_logits(model, last_block_data)
+        metric = metric * compute_frobenius_norm(jacobians)
+
+    return {"metric_values": metric}
 
 def jacobian_determinant_metric(model, activations, source_layer_idx, target_layer_idx, device) -> dict:
     """
@@ -253,7 +332,7 @@ def jacobian_determinant_metric(model, activations, source_layer_idx, target_lay
     n_blocks = len(model.blocks)
 
     # Determine effective bounds for the square Jacobian region
-    has_nonsquare_input = (source_layer_idx <= -2 and hasattr(model, 'input_layer'))
+    has_nonsquare_input = (source_layer_idx <= -1 and hasattr(model, 'input_layer'))
     effective_source = -1 if has_nonsquare_input else source_layer_idx
 
     # Full Jacobian convention: range(source, target) applies layers[source:target]
@@ -263,27 +342,25 @@ def jacobian_determinant_metric(model, activations, source_layer_idx, target_lay
     data = activations[f'layer{effective_source}_resid_post']
     jacobians = compute_jacobian_source_target_toy(model, data, effective_source, square_target, device)  # (n_points, d, d)
 
-    # assert jacobians.shape[-1] == jacobians.shape[-2], f"Jacobian shape is not square: {jacobians.shape}"
-    # metric = compute_jacobian_determinant(jacobians)  # (n_points,)
-    metric = compute_frobenius_norm(jacobians)  # (n_points,)
+    assert jacobians.shape[-1] == jacobians.shape[-2], f"Jacobian shape is not square: {jacobians.shape}"
+    metric = compute_jacobian_determinant(jacobians)  # (n_points,)
 
     # Multiply by non-square volume changes
-    # TODO: DO I really need this
-    # if has_nonsquare_input:
-    #     input_volume = compute_volume_change_input_to_embed(model)
-    #     metric = metric * input_volume
+    if has_nonsquare_input:
+        input_data = activations[f'layer{-2}_resid_post']
+        jacobians = compute_jacobian_input_to_embed(model, input_data)
+        metric = metric * compute_frobenius_norm(jacobians)
 
     if target_is_logits:
         last_block_data = activations[f'layer{n_blocks - 1}_resid_post']
-        logits_volume = compute_volume_change_to_logits(model, last_block_data, device)
-        # logits_volume = logits_volume / torch.max(logits_volume)  # Frobenius norm across output dimensions
-        metric = metric * logits_volume
+        jacobians = compute_jacobian_to_logits(model, last_block_data)
+        metric = metric * compute_frobenius_norm(jacobians)
 
     return {"metric_values": metric}
 
 def jacobian_determinant_layerwise_prod_metric(model, activations, source_layer_idx, target_layer_idx, device) -> dict:
     """
-    Compute the product of layerwise Jacobian determinants from source to target.
+    Compute the product of layerwise Frobenius norms of Jacobians from source to target.
     Handles non-square mappings (input→embed, last_block→logits) via singular value products.
 
     Args:
@@ -296,10 +373,12 @@ def jacobian_determinant_layerwise_prod_metric(model, activations, source_layer_
     Returns:
         Dict with 'metric_values' tensor of shape (n_points,).
     """
+    print(f"Warning: Layerwise Jacobian Determinant is not a good measure to calculate the volume change as they will multiply determinants over again, mixing negative and positive signs and volucume changes.")
+
     target_is_logits = (target_layer_idx == 'logits')
     n_blocks = len(model.blocks)
 
-    has_nonsquare_input = (source_layer_idx <= -2 and hasattr(model, 'input_layer'))
+    has_nonsquare_input = (source_layer_idx <= -1 and hasattr(model, 'input_layer'))
     effective_source = -1 if has_nonsquare_input else source_layer_idx
 
     # Layerwise convention: range(source, target) with each step applying layers[idx+1]
@@ -307,22 +386,18 @@ def jacobian_determinant_layerwise_prod_metric(model, activations, source_layer_
 
     jacobians = compute_jacobian_source_target_layerwise_toy(model, effective_source, square_target, device, activations)  # (n_mid_layers, n_points, d, d)
 
-    # assert jacobians.shape[-1] == jacobians.shape[-2], f"Jacobian shape is not square: {jacobians.shape}"
-
-    # det = compute_jacobian_determinant(jacobians)  # (n_mid_layers, n_points)
-    frob_norms = compute_frobenius_norm(jacobians)  # (n_mid_layers, n_points)
-    metric = torch.prod(frob_norms, dim=0)  # (n_points,)
+    det = compute_jacobian_determinant(jacobians)  # (n_mid_layers, n_points)
+    metric = torch.prod(det, dim=0)  # (n_points,)
 
     # Multiply by non-square volume changes
-    # TODO: DO I really need this
-    # if has_nonsquare_input:
-    #     input_volume = compute_volume_change_input_to_embed(model)
-    #     metric = metric * input_volume
+    if has_nonsquare_input:
+        input_data = activations[f'layer{-2}_resid_post']
+        jacobians = compute_jacobian_input_to_embed(model, input_data)
+        metric = metric * compute_frobenius_norm(jacobians)
 
     if target_is_logits:
         last_block_data = activations[f'layer{n_blocks - 1}_resid_post']
-        logits_volume = compute_volume_change_to_logits(model, last_block_data, device)
-        # logits_volume = logits_volume / torch.max(logits_volume)  # Frobenius norm across output dimensions
-        metric = metric * logits_volume
+        jacobians = compute_jacobian_to_logits(model, last_block_data)
+        metric = metric * compute_frobenius_norm(jacobians)
 
     return {"metric_values": metric}

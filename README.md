@@ -11,11 +11,16 @@ This repository focuses on analyzing the geometry of activation plateaus and res
   - **ResNet MLPs**: Custom MLP architectures with residual connections.
   - **Toy Tasks**: Support for synthetic tasks like spiral classification (`class_spiral`) and sine wave regression (`reg_sine_wave`).
   - **Checkpointing**: Automatic saving of model states and configurations.
+  - **HuggingFace Upload**: `train/upload_hf.py` to push checkpoints to the Hub.
 
-- **Geometric Analysis**: A set of scripts in `scripts/` to investigate the trained models:
+- **Interpolation & Metric Visualization** (`vis_plots/`): Scripts to investigate trained models via activation interpolation:
   - **Activation Interpolation**: `interpolate_and_record_activations.py` captures activations while processing interpolated inputs.
   - **Metric Visualization**: Tools to plot step sizes, relative distances, Hamming distances, and spline approximations of activation paths.
-  - **Jacobian Analysis**: Scripts to compute and analyze layer-wise and full-residual Jacobians.
+  - **Jacobian Analysis**: Scripts to compute and analyze layer-wise, attention, MLP, and full-residual Jacobians.
+
+- **Plateau Geometry Visualization** (`vis_plateaus/`): Directly visualize metric landscapes over input or activation space for toy models:
+  - Colors sampled points by L2 norm, Jacobian norm, or Jacobian determinant (full or layerwise product).
+  - Supports PCA projection for high-dimensional activation spaces.
 
 ## Project Structure
 
@@ -25,13 +30,26 @@ This repository focuses on analyzing the geometry of activation plateaus and res
 │   ├── train.py           # Main training entry point
 │   ├── model.py           # ResNetMLP and ResNetMLPSkeleton architectures
 │   ├── data.py            # Toy dataset generators
+│   ├── upload_hf.py       # Upload checkpoints to HuggingFace Hub
 │   └── config.yaml        # Training configuration (hyperparams, task settings)
-├── scripts/                # Analysis and visualization tools
-│   ├── interpolate_....py # Core script for generating activation data
+├── vis_plots/              # Interpolation recording and metric plots
+│   ├── interpolate_and_record_activations.py  # Core script for generating activation data
 │   ├── *_plots.py         # Plotting scripts for various metrics
-│   ├── jacobians_*.py     # Jacobian analysis scripts
-│   └── config.yaml        # Analysis configuration (models, interpolation pairs)
+│   ├── jacobians_*.py     # Jacobian analysis scripts (layerwise, attention, mlp, full_residual)
+│   ├── utils.py           # Shared utilities (model loaders, interpolation, metrics)
+│   └── config.yaml        # Analysis configuration (models, interpolation pairs, image paths)
+├── vis_plateaus/           # Plateau geometry visualization (toy ResNet only)
+│   ├── visualize_plateaus.py  # Main script for plateau geometry plots
+│   ├── compute_metrics.py     # Jacobian norm/determinant metric computation
+│   ├── utils.py               # Shared utilities for this pipeline
+│   └── config.yaml            # Plateau vis settings (metric, layers, resolution)
 ├── run/                    # Shell scripts for running experiments
+│   ├── full_experiment.sh     # Full GPT-2 experiment
+│   ├── toy_resnet_vis.sh      # Toy ResNet interpolation pipeline
+│   ├── vis_plateaus.sh        # Plateau geometry visualization (loops over noise levels)
+│   ├── resnet_vis.sh          # ResNet-101 plots
+│   └── vit_vis.sh             # ViT (DINOv2) plots
+├── images/                 # Local image inputs for ViT/ResNet interpolation
 ├── activations/            # Output directory for recorded activations
 ├── checkpoints/            # Output directory for training checkpoints
 └── plots/                  # Output directory for generated figures
@@ -41,10 +59,10 @@ This repository focuses on analyzing the geometry of activation plateaus and res
 
 ### 1. Installation
 
-Install the required dependencies:
+Install the required dependencies using `uv`:
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 2. Training a Model
@@ -59,24 +77,36 @@ This will create a timestamped directory in `checkpoints/` containing the model 
 
 ### 3. Running Analysis
 
-After training, you can analyze the model's activation geometry.
+After training, you can analyze the model's activation geometry. Ensure `vis_plots/config.yaml` points to your trained model checkpoint (under `model_names: toy_resnet`).
 
-First, ensure `scripts/config.yaml` points to your trained model checkpoint (under `model_names: toy_resnet`) or use the command line arguments to specify the model type.
-
-To run the full visualization pipeline for a toy ResNet model:
+**Option A — Full interpolation + metric plots pipeline:**
 
 ```bash
 bash run/toy_resnet_vis.sh
 ```
 
 This script will:
-1.  Run `interpolate_and_record_activations.py` to generate data in `activations/`.
-2.  Run various plotting scripts to generate figures in `plots/`.
+1. Run `vis_plots/interpolate_and_record_activations.py` to generate data in `activations/`.
+2. Run various plotting scripts to generate figures in `plots/`.
+
+**Option B — Plateau geometry visualization:**
+
+```bash
+bash run/vis_plateaus.sh
+```
+
+Or directly:
+
+```bash
+uv run vis_plateaus/visualize_plateaus.py --model_type toy_resnet --data_type class_spiral \
+    --model_path checkpoints/class_spiral/ResNetMLP/<config_name> --multi_seed
+```
 
 ## Configuration
 
-- **Training**: valid parameters for `train/config.yaml` include model dimensions (`hidden_dim`, `num_blocks`), training settings (`lr`, `batch_size`), and task specification (`class_spiral` vs `reg_sine_wave`).
-- **Analysis**: `scripts/config.yaml` controls the interpolation steps (`n_steps`), specific model paths, and the input pairs used for interpolation (e.g., specific points in the spiral 2D plane).
+- **Training** (`train/config.yaml`): model dimensions (`hidden_dim`, `num_blocks`), training settings (`lr`, `batch_size`), task (`class_spiral` vs `reg_sine_wave`), and multi-seed `n_runs`.
+- **Interpolation & plots** (`vis_plots/config.yaml`): interpolation steps (`n_steps`), model paths, input pairs (2D spiral points, local image paths from `images/`, text token pairs).
+- **Plateau visualization** (`vis_plateaus/config.yaml`): metric (`l2_norm`, `jacobian_norm_full`, etc.), source/target layer indices, grid resolution (`n_points`), PCA components, log scale, model path.
 
 ## Acknowledgements
 

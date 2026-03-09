@@ -19,13 +19,13 @@ import math
 import sys
 sys.path.append('./train')
 from utils import load_config, load_model, load_model_from_checkpoint, construct_filepath, get_n_layers_from_model, get_model_names, get_model_name, LAYER_ARGUMENT_IDX_MAPPING
-from compute_metrics import l2_norm_metric, jacobian_determinant_metric, jacobian_determinant_layerwise_prod_metric
+from compute_metrics import l2_norm_metric, jacobian_determinant_metric, jacobian_determinant_layerwise_prod_metric, jacobian_norm_metric, jacobian_norm_layerwise_prod_metric
 from model import ResNetMLP, ResNetMLPSkeleton
 from data import ToyDataset
 
 config = load_config("vis_plateaus/config.yaml")
 
-METRIC_OPTIONS = ['l2_norm', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod']
+METRIC_OPTIONS = ['l2_norm', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod', 'jacobian_norm_full', 'jacobian_norm_layerwise_prod']
 
 LAYER_ALIASES = {'embedding': 'embed'}
 
@@ -236,7 +236,7 @@ def visualize_plateau(
     plt.colorbar(scatter, ax=ax, label=metric_name, shrink=0.7 if use_3d else 1.0, pad=0.1)
 
     # --- Mark reference point ---
-    if reference_point_source_act is not None:
+    if reference_point_source_act is not None and metric_name == 'l2_norm':
         ref = reference_point_source_act.numpy()
         if ref.ndim == 1:
             ref = ref.reshape(1, -1)
@@ -313,7 +313,18 @@ def compute_metric_for_checkpoint(
     )
 
     if metric == 'l2_norm':
-        results = l2_norm_metric(model, reference_point, activations, source_layer_idx, target_layer_idx, device)
+        point_activations = collect_activations_resid_post(
+            model,
+            reference_point.to(device).unsqueeze(0),
+            source_layer_idx=source_layer_idx,
+            target_layer_idx=effective_target,
+            device=device
+        )
+        results = l2_norm_metric(model, point_activations, activations, source_layer_idx, target_layer_idx, device)
+    elif metric == 'jacobian_norm_full':
+        results = jacobian_norm_metric(model, activations, source_layer_idx, target_layer_idx, device)
+    elif metric == 'jacobian_norm_layerwise_prod':
+        results = jacobian_norm_layerwise_prod_metric(model, activations, source_layer_idx, target_layer_idx, device)
     elif metric == 'jacobian_determinant_full':
         results = jacobian_determinant_metric(model, activations, source_layer_idx, target_layer_idx, device)
     elif metric == 'jacobian_determinant_layerwise_prod':
@@ -371,6 +382,7 @@ def main():
     SOURCE_LAYER_IDX_RAW = config['source_layer_idx']
     TARGET_LAYER_IDX_RAW = config['target_layer_idx']
     N_PCA_COMPONENTS = config.get('n_pca_components', 3)
+    LOG_SCALE = config.get('log_scale', False)
 
     # Resolve layer indices (handle string aliases like 'embedding' -> 'embed')
     def resolve_layer_idx(raw_value):
@@ -434,7 +446,8 @@ def main():
         # Title
         target_label = TARGET_LAYER_IDX_RAW if target_is_logits else f"layer {TARGET_LAYER_IDX_RAW}"
         source_label = SOURCE_LAYER_IDX_RAW if isinstance(SOURCE_LAYER_IDX_RAW, str) else f"layer {SOURCE_LAYER_IDX_RAW}"
-        title = f"Plateau Visualization: {METRIC} (mean over {n_seeds} seeds)\nSource: {source_label}, Target: {target_label}, Radius: {RADIUS}"
+        title = f"Plateau Visualization: {METRIC} (mean over {n_seeds} seeds, log scale: {LOG_SCALE})\nSource: {source_label}, Target: {target_label}"
+
         if METRIC == 'l2_norm' and 'predicted_class' in first_seed_result:
             title += f"\nRef point {REFERENCE_POINT.tolist()} — predicted class: {first_seed_result['predicted_class']}"
 
@@ -459,11 +472,15 @@ def main():
         # Title
         target_label = TARGET_LAYER_IDX_RAW if target_is_logits else f"layer {TARGET_LAYER_IDX_RAW}"
         source_label = SOURCE_LAYER_IDX_RAW if isinstance(SOURCE_LAYER_IDX_RAW, str) else f"layer {SOURCE_LAYER_IDX_RAW}"
-        title = f"Plateau Visualization: {METRIC}\nSource: {source_label}, Target: {target_label}, Radius: {RADIUS}"
+        title = f"Plateau Visualization: {METRIC} (log scale: {LOG_SCALE})\nSource: {source_label}, Target: {target_label}, Radius: {RADIUS}"
         if METRIC == 'l2_norm' and 'predicted_class' in result:
             title += f"\nRef point {REFERENCE_POINT.tolist()} — predicted class: {result['predicted_class']}"
 
         output_path = f"{output_dir}/{METRIC}_src-{SOURCE_LAYER_IDX_RAW}_tgt-{TARGET_LAYER_IDX_RAW}.png"
+
+    if LOG_SCALE:
+        metric_values = torch.log(metric_values + 1e-8)  # Add small constant to avoid log(0)
+        METRIC += " (log scale)"
 
     print(f"Loaded model on {device} (task config: {task_config})")
 
