@@ -332,7 +332,8 @@ def compute_metric_for_checkpoint(
     else:
         raise ValueError(f"Metric {metric} not supported. Choose from {METRIC_OPTIONS}")
 
-    source_activations = activations[f'layer{source_layer_idx-1}_resid_post']
+    # source_activations = activations[f'layer{source_layer_idx-1}_resid_post']
+    source_activations = activations[f'layer{source_layer_idx}_resid_post']
 
     # Reference point in source space
     if source_layer_idx <= -2:
@@ -343,7 +344,9 @@ def compute_metric_for_checkpoint(
             source_layer_idx=-2, target_layer_idx=source_layer_idx,
             device=device,
         )
-        ref_source_act = ref_acts[f'layer{source_layer_idx-1}_resid_post'].squeeze(0)
+        # ref_source_act = ref_acts[f'layer{source_layer_idx-1}_resid_post'].squeeze(0)
+        ref_source_act = ref_acts[f'layer{source_layer_idx}_resid_post'].squeeze(0)
+
 
     out = {
         'metric_values': results['metric_values'],

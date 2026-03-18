@@ -1,0 +1,15 @@
+n_points: 10000
+radius: 1.0
+# -2 for input space and -1 for embedding space, and non-negative integer for residual blocks.
+# Collect resid_post activations after that layer. When -2 is given, the source space is the raw input space. When -1 is given, the source space is the post-embedding space. When a non-negative integer k is given, the source space is the activations after the layer k (resid_post).
+source_layer_idx: -2
+target_layer_idx: 3
+reference_point: [0.25, 0.0]
+n_pca_components: 2
+
+# Distance level settings
+n_contour_levels: 15
+contour_level_spacing: "log"  # "even" or "log"
+
+model_names:
+  toy_resnet: "checkpoints/class_spiral/ResNetMLP/noise-0.00-multi_seed_5_runs"
