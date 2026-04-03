@@ -14,9 +14,10 @@ This repository focuses on analyzing the geometry of activation plateaus and res
   - **HuggingFace Upload**: `train/upload_hf.py` to push checkpoints to the Hub.
 
 - **Interpolation & Metric Visualization** (`vis_plots/`): Scripts to investigate trained models via activation interpolation:
-  - **Activation Interpolation**: `interpolate_and_record_activations.py` captures activations while processing interpolated inputs.
+  - **Activation Interpolation**: `interpolate_and_record_activations.py` captures activations while processing interpolated inputs. Use `--interpolate_only_first_layer` to record only from the first interpolation point (faster, less disk usage).
   - **Metric Visualization**: Tools to plot step sizes, relative distances, Hamming distances, and spline approximations of activation paths.
   - **Jacobian Analysis**: Scripts to compute and analyze layer-wise, attention, MLP, and full-residual Jacobians.
+  - **No-LayerNorm GPT-2 support**: `utils.py` includes `load_gpt2_no_ln()` for LNFree GPT-2 variants (`gpt2-small_LNFree`, `gpt2-medium_LNFree`, `gpt2-large_LNFree`, `gpt2-xl_LNFree`) loaded from HuggingFace and converted via TransformerLens.
 
 - **Plateau Geometry Visualization** (`vis_plateaus/`): Directly visualize metric landscapes over input or activation space for toy models:
   - Colors sampled points by L2 norm, Jacobian norm, or Jacobian determinant (full or layerwise product).
@@ -105,7 +106,7 @@ uv run vis_plateaus/visualize_plateaus.py --model_type toy_resnet --data_type cl
 ## Configuration
 
 - **Training** (`train/config.yaml`): model dimensions (`hidden_dim`, `num_blocks`), training settings (`lr`, `batch_size`), task (`class_spiral` vs `reg_sine_wave`), and multi-seed `n_runs`.
-- **Interpolation & plots** (`vis_plots/config.yaml`): interpolation steps (`n_steps`), model paths, input pairs (2D spiral points, local image paths from `images/`, text token pairs).
+- **Interpolation & plots** (`vis_plots/config.yaml`): interpolation steps (`n_steps`), model paths, input pairs (2D spiral points, local image paths from `images/`, text token pairs), and `layer_to_interpolate_toy_resnet` (hook layer index for toy ResNet interpolation, default `-2` = `hook_input`).
 - **Plateau visualization** (`vis_plateaus/config.yaml`): metric (`l2_norm`, `jacobian_norm_full`, etc.), source/target layer indices, grid resolution (`n_points`), PCA components, log scale, model path.
 
 ## Acknowledgements

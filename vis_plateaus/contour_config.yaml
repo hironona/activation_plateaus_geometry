@@ -3,7 +3,7 @@ radius: 1.0
 # -2 for input space and -1 for embedding space, and non-negative integer for residual blocks.
 # Collect resid_post activations after that layer. When -2 is given, the source space is the raw input space. When -1 is given, the source space is the post-embedding space. When a non-negative integer k is given, the source space is the activations after the layer k (resid_post).
 source_layer_idx: -2
-target_layer_idx: 3
+target_layer_idx: 19
 reference_point: [0.25, 0.0]
 n_pca_components: 2
 

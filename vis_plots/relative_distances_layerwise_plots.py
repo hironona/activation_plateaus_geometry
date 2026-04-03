@@ -127,6 +127,36 @@ def variant3_plot(plot_data, shared_id, pairs_ids, output_dir, N, std_dict=None)
     )
 
 
+def single_layer_compute(shared_id, pairs_ids, model_name, layer_to_interpolate, target_layer):
+    """Compute relative distances for a single target layer only.
+
+    Reuses variant1_compute and filters to target_layer, returning single-tensor format.
+    """
+    full_data = variant1_compute(shared_id, pairs_ids, model_name, layer_to_interpolate)
+    target_key = f"Layer {target_layer}"
+    filtered = {}
+    for pair_name, layer_dict in full_data.items():
+        if target_key not in layer_dict:
+            raise KeyError(f"Layer {target_layer} not found in activations. Available: {list(layer_dict.keys())}")
+        filtered[pair_name] = layer_dict[target_key]
+    return filtered
+
+
+def single_layer_plot(plot_data, shared_id, pairs_ids, output_dir, layer_to_interpolate, target_layer, std_dict=None):
+    """Plot relative distances for a single target layer."""
+    generate_interpolation_results_plot(
+        data_dict=plot_data,
+        suptitle=f"Relative Distances — Layer {target_layer} (Interpolate in Layer {layer_to_interpolate})",
+        ylabel="Relative Distance to Token A (0) vs Token B (1)",
+        output_path=f"{output_dir}/relative_distances_layer{target_layer}_interpolate{layer_to_interpolate}.png",
+        n_steps=N_STEPS,
+        shared_id=shared_id,
+        pairs_ids=pairs_ids,
+        alpha_range=[0, 1],
+        std_dict=std_dict
+    )
+
+
 def variant3_record_layer_plus_n(n_layers: int, shared_id, pairs_ids, model_name: str):
     """Variant 3: Interpolate in layer i, record in layer i+N for various N."""
     print("\nVariant 3: Interpolate in layer i, record in layer i+N")
@@ -143,6 +173,7 @@ def main():
     parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data type to use (text or image or class_spiral)')
     parser.add_argument('--interpolate_only_first_layer', action='store_true', help='Only interpolate at the first layer for less data')
     parser.add_argument('--multi_seed', action='store_true', help='Aggregate across multiple seeds (toy_resnet only)')
+    parser.add_argument('--single_layer', type=int, default=None, help='Plot relative distances for a single target layer only')
 
     args = parser.parse_args()
 
@@ -173,6 +204,19 @@ def main():
         model_names = get_model_names(config, args.model_type)
         print(f"Multi-seed mode: {len(model_names)} seeds | Steps: {N_STEPS}")
         output_dir = f"./plots/{MODEL_NAME}"
+
+        if args.single_layer is not None:
+            print(f"\nSingle layer mode: Layer {args.single_layer}, interpolate in layer {layer_to_interpolate}")
+            all_sl = []
+            for idx, mn in enumerate(model_names):
+                print(f"  Seed {idx + 1}/{len(model_names)}: {mn}")
+                all_sl.append(single_layer_compute(SHARED_ID, PAIRS_IDS, mn, layer_to_interpolate, args.single_layer))
+            mean_sl, std_sl = aggregate_metric_data(all_sl)
+            os.makedirs(output_dir, exist_ok=True)
+            single_layer_plot(mean_sl, SHARED_ID, PAIRS_IDS, output_dir, layer_to_interpolate, args.single_layer, std_dict=std_sl)
+            print(f"\nPlot saved to: {output_dir}/")
+            print("\n=== Complete ===")
+            return
 
         # Variant 1
         print(f"\nVariant 1: Interpolate in layer {layer_to_interpolate}, record in all layers")
@@ -215,6 +259,13 @@ def main():
             return
 
         os.makedirs(f"./plots/{MODEL_NAME}", exist_ok=True)
+
+        if args.single_layer is not None:
+            print(f"\nSingle layer mode: Layer {args.single_layer}, interpolate in layer {layer_to_interpolate}")
+            plot_data = single_layer_compute(SHARED_ID, PAIRS_IDS, MODEL_NAME, layer_to_interpolate, args.single_layer)
+            single_layer_plot(plot_data, SHARED_ID, PAIRS_IDS, f"./plots/{MODEL_NAME}", layer_to_interpolate, args.single_layer)
+            print("\n=== Complete ===")
+            return
 
         activations = load_activations(MODEL_NAME, SHARED_ID, layer_to_interpolate, PAIRS_IDS[0], N_STEPS)
         n_layers = get_n_layers(activations)
