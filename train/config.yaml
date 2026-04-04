@@ -9,21 +9,23 @@ model:
 model_type: "ResNetMLP" # Options: "ResNetMLP", "ResNetMLPSkeleton"
 
 training:
-  batch_size: 32
+  batch_size: 64
   learning_rate: 1e-4
   weight_decay: 0.01
-  epochs: 50
-  save_every: 25
+  epochs: 1000
+  save_every: 100
   seed: 0
   checkpoint_dir: "./checkpoints"
-  checkpoint_name: "noise-0.1" # e.g. "noise-0.00-multi_seed_5_runs"
-  checkpoint_description: "std=0.1, num_samples=10000, shuffle=True, lr=1e-4, weight_decay=0.01, epochs=50, batch_size=32, seed=0"
+  checkpoint_name: "noise-0.00-multi_seed_5_runs" # e.g. "noise-0.00-multi_seed_5_runs"
+  checkpoint_description: "std=0.00, num_samples=50000, shuffle=True, lr=1e-4, weight_decay=0.01, epochs=1000, batch_size=64, seed=0"
   n_runs: 5
+  val_split: 0.1 # fraction of data used for validation
+  lr_scheduler: "cosine" # Options: "cosine", "none"
 
 task:
   name: "class_spiral" # Options: "reg_sine_wave", "class_spiral"
-  num_samples: 10000
-  noise_std: 0.1
+  num_samples: 50000
+  noise_std: 0.00
   num_classes: 2
   distribution: "normal" # Options: "uniform", "normal"
   shuffle_per_epoch: True
