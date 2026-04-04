@@ -22,7 +22,7 @@ mkdir -p slurm_output
 #
 # Uncomment the block below if you want to set up conda:
 #
-# CONDA_ENV_NAME="activation_plateau"
+CONDA_ENV_NAME="interp"
 # if ! conda env list | grep -q "^${CONDA_ENV_NAME}"; then
 #     echo "Creating conda environment from uv.lock..."
 #     # Extract Python version and dependencies from uv.lock
@@ -33,7 +33,7 @@ mkdir -p slurm_output
 # fi
 #
 # # Activate environment
-# source activate ${CONDA_ENV_NAME}
+source activate ${CONDA_ENV_NAME}
 # ============================================================================
 
 # Navigate to project root
