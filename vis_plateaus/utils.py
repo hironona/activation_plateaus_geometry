@@ -146,7 +146,7 @@ def load_model(model_name):
     return model
 
 def load_model_from_checkpoint(checkpoint_path):
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
     full_config = checkpoint['config']
     model_config = full_config['model']
     model_type = full_config['model_type']
@@ -211,6 +211,12 @@ def get_model_name(config: Dict, model_type: str) -> str:
 
 def _find_latest_checkpoint(directory: str) -> str:
     """Find the latest checkpoint file in a directory."""
+
+    # Return None as fallback if the given path is not a directory
+    if not os.path.isdir(directory):
+        print(f"Warning: {directory} is not a directory. Skipping.")
+        return None
+
     checkpoint_files = [f for f in os.listdir(directory) if f.startswith("checkpoint_epoch_") and f.endswith(".pt")]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in directory: {directory}")
@@ -235,7 +241,8 @@ def get_model_names(config: Dict, model_type: str) -> List[str]:
         if path.is_file() and path.suffix == ".pt":
             return [val]
         else: # when given a directory, return all .pt files in that directory
-            return [_find_latest_checkpoint(os.path.join(val, timestamp)) for timestamp in os.listdir(val)]
+            latest_ckpts = [_find_latest_checkpoint(os.path.join(val, timestamp)) for timestamp in os.listdir(val)]
+            return [ckpt for ckpt in latest_ckpts if ckpt is not None]
     else:
         raise ValueError(f"Invalid model name format for {model_type}: {val}")
 

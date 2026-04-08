@@ -6,13 +6,9 @@ radius: 1.0
 source_layer_idx: -2
 target_layer_idx: 'logits'
 reference_point: [0.25, 0.0] # Of whose plateau to visualize. Necessary for L2_norm metric.
-metric: "jacobian_norm_full"  # What metric to use to color each point in the source space, Options: ['l2_norm', 'jacobian_norm_full', 'jacobian_norm_layerwise_prod', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod']
+metric: "jacobian_norm_layerwise_prod"  # What metric to use to color each point in the source space, Options: ['l2_norm', 'jacobian_norm_layerwise_prod', 'jacobian_norm_full', 'jacobian_determinant_layerwise_prod', 'jacobian_determinant_full']
 n_pca_components: 3  # Number of PCA components when source dim > this value. Options: 2 or 3
 log_scale: True  # Whether to use log scale for the metric values when coloring the points
 
-# Contour visualization settings
-contour_n_levels: 15              # Number of contour levels
-contour_level_spacing: "even"     # "even" or "log"
-
 model_names:
-  toy_resnet: "checkpoints/class_spiral/ResNetMLP/noise-0.00-multi_seed_5_runs"
+  toy_resnet: "checkpoints/class_spiral/ResNetMLP_epoch500/noise-0.00-multi_seed_5_runs"

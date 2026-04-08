@@ -272,8 +272,10 @@ def jacobian_norm_metric(model, activations, source_layer_idx, target_layer_idx,
 
 def jacobian_norm_layerwise_prod_metric(model, activations, source_layer_idx, target_layer_idx, device) -> dict:
     """
-    Compute the product of layerwise Frobenius norms of Jacobians from source to target.
-    Handles non-square mappings (input→embed, last_block→logits) via singular value products.
+    Compute: ||J_unembed · J_{n-1} · ... · J_0 · J_embed||_F
+
+    All Jacobians (embedding, hidden layers, unembedding) are multiplied as matrices
+    first (via bmm), then the Frobenius norm of the final product is taken.
 
     Args:
         model: Toy ResNet model
@@ -296,20 +298,33 @@ def jacobian_norm_layerwise_prod_metric(model, activations, source_layer_idx, ta
 
     jacobians = compute_jacobian_source_target_layerwise_toy(model, effective_source, square_target, device, activations)  # (n_mid_layers, n_points, d, d)
 
-    # det = compute_jacobian_determinant(jacobians)  # (n_mid_layers, n_points)
-    frob_norms = compute_frobenius_norm(jacobians)  # (n_mid_layers, n_points)
-    metric = torch.prod(frob_norms, dim=0)  # (n_points,)
-
-    # Multiply by non-square volume changes
+    # Start with embedding Jacobian if present
     if has_nonsquare_input:
         input_data = activations[f'layer{-2}_resid_post']
-        jacobians = compute_jacobian_input_to_embed(model, input_data)
-        metric = metric * compute_frobenius_norm(jacobians)
+        embed_jacs = compute_jacobian_input_to_embed(model, input_data)
+        product = embed_jacs  # (n_points, d_embed, d_input)
+    else:
+        product = jacobians[0]  # (n_points, d, d)
+        jacobians = jacobians[1:]
 
+    # Multiply hidden-layer Jacobians
+    if has_nonsquare_input:
+        # Product so far: (n_points, d_embed, d_input)
+        # First hidden jacobian: (n_points, d, d_embed)
+        product = torch.bmm(jacobians[0], product)
+        for i in range(1, jacobians.shape[0]):
+            product = torch.bmm(jacobians[i], product)
+    else:
+        for i in range(1, jacobians.shape[0]):
+            product = torch.bmm(jacobians[i], product)
+
+    # Multiply by unembedding Jacobian if target is logits
     if target_is_logits:
         last_block_data = activations[f'layer{n_blocks - 1}_resid_post']
-        jacobians = compute_jacobian_to_logits(model, last_block_data)
-        metric = metric * compute_frobenius_norm(jacobians)
+        unembed_jacs = compute_jacobian_to_logits(model, last_block_data)
+        product = torch.bmm(unembed_jacs, product)
+
+    metric = compute_frobenius_norm(product)  # (n_points,)
 
     return {"metric_values": metric}
 

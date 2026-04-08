@@ -389,8 +389,8 @@ def main():
 
     # Resolve layer indices (handle string aliases like 'embedding' -> 'embed')
     def resolve_layer_idx(raw_value):
-        if raw_value == 'input' or raw_value == -2:
-            raise ValueError("Source layer cannot be 'input' or -2 because the input space is not a part of the model layers.")
+        # if raw_value == 'input' or raw_value == -2:
+        #     raise ValueError("Source layer cannot be 'input' or -2 because the input space is not a part of the model layers.")
         try:
             return int(raw_value)
         except (ValueError, TypeError):

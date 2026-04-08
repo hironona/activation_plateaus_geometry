@@ -11,7 +11,7 @@ from tqdm import tqdm
 import sys
 import argparse
 sys.path.append('./vis_plots')
-from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names, aggregate_metric_data
+from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names, aggregate_metric_data, format_pair_ids_for_subdirectory
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -93,7 +93,7 @@ def compute_full_residual_norms_for_model(model_name, model_type, shared_id, pai
         {pair_key: norms_tensor} — single-line format for aggregate_metric_data.
     """
     if model_type == 'toy_resnet':
-        model, _ = load_model_from_checkpoint(model_name)
+        model, _, _ = load_model_from_checkpoint(model_name)
     else:
         model = load_model(model_name)
 
@@ -169,7 +169,8 @@ def main():
 
         mean_data, std_data = aggregate_metric_data(all_seeds_data)
 
-        output_path = f"./plots/{MODEL_NAME}/jacobians_full_residual_norms.png"
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        output_path = f"./plots/{MODEL_NAME}/{pairs_subdir}/jacobians_full_residual_norms.png"
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         generate_interpolation_results_plot(
             data_dict=mean_data,
@@ -194,7 +195,8 @@ def main():
             MODEL_NAME, args.model_type, SHARED_ID, PAIRS_IDS, layer_to_interpolate, N_STEPS
         )
 
-        output_path = f"./plots/{MODEL_NAME}/jacobians_full_residual_norms.png"
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        output_path = f"./plots/{MODEL_NAME}/{pairs_subdir}/jacobians_full_residual_norms.png"
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         generate_interpolation_results_plot(
             data_dict=jacobian_norms,

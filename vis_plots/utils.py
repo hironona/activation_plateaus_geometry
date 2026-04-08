@@ -146,7 +146,7 @@ def load_model(model_name):
     return model
 
 def load_model_from_checkpoint(checkpoint_path):
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
     full_config = checkpoint['config']
     model_config = full_config['model']
     model_type = full_config['model_type']
@@ -241,6 +241,25 @@ def lerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
 
     return lerp_result_normalized * target_norm
 
+def format_pair_ids_for_subdirectory(pairs_ids: List[List[str]]) -> str:
+    """Format multiple pairs into a subdirectory path.
+
+    Args:
+        pairs_ids: List of pairs, each pair is a list of 2 strings.
+
+    Returns:
+        String like "pairs/a-b_c-d" (subdirectory-safe)
+    """
+    pair_strs = []
+    for pair in pairs_ids:
+        a, b = pair[0], pair[1]
+        # Make safe for directory names
+        a_clean = str(a).replace(" ", "_").replace(".", "_").replace("/", "_")
+        b_clean = str(b).replace(" ", "_").replace(".", "_").replace("/", "_")
+        pair_strs.append(f"{a_clean}-{b_clean}")
+    return "pairs/" + "_".join(pair_strs)
+
+
 def construct_filepath(model_name: str, shared_id: str, interpolation_layer: int, pair_ids: List[str], n_steps: int, freeze_suffix: str = "") -> str:
     """Construct full filepath for activation file.
 
@@ -280,6 +299,12 @@ def get_model_name(config: Dict, model_type: str) -> str:
 
 def _find_latest_checkpoint(directory: str) -> str:
     """Find the latest checkpoint file in a directory."""
+
+    # Return None as fallback if the given path is not a directory
+    if not os.path.isdir(directory):
+        print(f"Warning: {directory} is not a directory. Skipping.")
+        return None
+
     checkpoint_files = [f for f in os.listdir(directory) if f.startswith("checkpoint_epoch_") and f.endswith(".pt")]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in directory: {directory}")
@@ -304,7 +329,8 @@ def get_model_names(config: Dict, model_type: str) -> List[str]:
         if path.is_file() and path.suffix == ".pt":
             return [val]
         else: # when given a directory, return all .pt files in that directory
-            return [_find_latest_checkpoint(os.path.join(val, timestamp)) for timestamp in os.listdir(val)]
+            latest_ckpts = [_find_latest_checkpoint(os.path.join(val, timestamp)) for timestamp in os.listdir(val)]
+            return [ckpt for ckpt in latest_ckpts if ckpt is not None]
     else:
         raise ValueError(f"Invalid model name format for {model_type}: {val}")
     
@@ -509,9 +535,10 @@ def generate_interpolation_results_plot(
         ax.grid(True, alpha=0.3)
 
     # Shared y-limits
-    y_padding = (y_max - y_min) * 0.05
-    for ax in axes:
-        ax.set_ylim(y_min - y_padding, y_max + y_padding)
+    if not (np.isnan(y_min) or np.isnan(y_max) or np.isinf(y_min) or np.isinf(y_max) or y_min == float('inf') or y_max == float('-inf')):
+        y_padding = (y_max - y_min) * 0.05
+        for ax in axes:
+            ax.set_ylim(y_min - y_padding, y_max + y_padding)
 
     # Legend for multi-layer plots
     if has_multi_layer_data:

@@ -11,7 +11,7 @@ from tqdm import tqdm
 import sys
 import argparse
 sys.path.append('./vis_plots')
-from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model
+from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model, format_pair_ids_for_subdirectory
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -126,11 +126,14 @@ def main():
     for pair_key, layer_norms in jacobian_norms_by_pair.items():
         data_dict[pair_key] = {f"Layer {idx}": norms for idx, norms in layer_norms.items()}
 
+    pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+    output_dir = f"./plots/{MODEL_NAME}/{pairs_subdir}"
+    os.makedirs(output_dir, exist_ok=True)
     generate_interpolation_results_plot(
         data_dict=data_dict,
         suptitle="Jacobian Norms: Attention (∂attn_out / ∂resid_pre)",
         ylabel="Frobenius Norm",
-        output_path=f"./plots/{MODEL_NAME}/jacobians_attention_norms.png",
+        output_path=f"{output_dir}/jacobians_attention_norms.png",
         n_steps=N_STEPS,
         shared_id=SHARED_ID,
         pairs_ids=PAIRS_IDS,
@@ -152,10 +155,10 @@ def main():
         data_dict=product_norms,
         suptitle="Jacobian Products: Attention (Full Chain)",
         ylabel="Frobenius Norm",
-        output_path=f"./plots/{MODEL_NAME}/jacobians_attention_product.png",
+        output_path=f"{output_dir}/jacobians_attention_product.png",
         n_steps=N_STEPS,
         shared_id=SHARED_ID,
-        pair_ids=PAIRS_IDS
+        pairs_ids=PAIRS_IDS
     )
 
     print("\n=== Complete ===")

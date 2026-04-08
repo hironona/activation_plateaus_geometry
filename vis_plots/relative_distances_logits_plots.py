@@ -11,7 +11,7 @@ import torch
 import os
 import sys
 sys.path.append('./vis_plots')
-from utils import load_activations, load_config, compute_relative_distances, construct_filepath, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data
+from utils import load_activations, load_config, compute_relative_distances, construct_filepath, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data, format_pair_ids_for_subdirectory
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -86,7 +86,10 @@ def main():
 
             mean_data, std_data = aggregate_metric_data(all_seeds_data)
 
-            output_path = f"{output_dir}/relative_distances_logits{freeze_suffix}_layer{layer_to_interpolate}_interpolation.png"
+            pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+            plot_output_dir = f"{output_dir}/{pairs_subdir}"
+            os.makedirs(plot_output_dir, exist_ok=True)
+            output_path = f"{plot_output_dir}/relative_distances_logits{freeze_suffix}_layer{layer_to_interpolate}_interpolation.png"
             generate_interpolation_results_plot(
                 data_dict=mean_data,
                 suptitle=f"Logits Relative Distances ({variant_name}), Interpolated at Layer {layer_to_interpolate}",
@@ -115,7 +118,8 @@ def main():
             plot_data = compute_logits_data(MODEL_NAME, SHARED_ID, PAIRS_IDS, layer_to_interpolate, N_STEPS, freeze_suffix)
 
             # Generate plot
-            output_path = f"./plots/{MODEL_NAME}/relative_distances_logits{freeze_suffix}_layer{layer_to_interpolate}_interpolation.png"
+            pairs_str = format_pair_ids_for_filename(PAIRS_IDS)
+            output_path = f"./plots/{MODEL_NAME}/relative_distances_logits{freeze_suffix}_layer{layer_to_interpolate}_interpolation_{pairs_str}.png"
             generate_interpolation_results_plot(
                 data_dict=plot_data,
                 suptitle=f"Logits Relative Distances ({variant_name}), Interpolated at Layer {layer_to_interpolate}",

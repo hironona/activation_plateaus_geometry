@@ -13,7 +13,7 @@ from tqdm import tqdm
 import sys
 import argparse
 sys.path.append('./vis_plots')
-from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names, aggregate_metric_data
+from utils import load_model, load_config, load_activations, generate_interpolation_results_plot, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names, aggregate_metric_data, format_pair_ids_for_subdirectory
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -114,7 +114,7 @@ def compute_mlp_data_for_model(model_name, model_type, shared_id, pairs_ids, lay
         product_norms_data: {pair_key: tensor} — single-line format
     """
     if model_type == 'toy_resnet':
-        model, _ = load_model_from_checkpoint(model_name)
+        model, _, _ = load_model_from_checkpoint(model_name)
         n_layers = len(model.blocks)
         layer_range = range(0, n_layers)
     else:
@@ -219,11 +219,14 @@ def main():
         output_dir = f"./plots/{MODEL_NAME}"
         os.makedirs(output_dir, exist_ok=True)
 
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        plot_output_dir = f"{output_dir}/{pairs_subdir}"
+        os.makedirs(plot_output_dir, exist_ok=True)
         generate_interpolation_results_plot(
             data_dict=mean_lw,
             suptitle="Jacobian Norms: MLP (∂mlp_out / ∂resid_pre)",
             ylabel="Frobenius Norm",
-            output_path=f"{output_dir}/jacobians_mlp_norms.png",
+            output_path=f"{plot_output_dir}/jacobians_mlp_norms.png",
             n_steps=N_STEPS,
             shared_id=SHARED_ID,
             pairs_ids=PAIRS_IDS,
@@ -236,7 +239,7 @@ def main():
             data_dict=mean_prod,
             suptitle="Jacobian Products: MLP (Full Chain)",
             ylabel="Frobenius Norm",
-            output_path=f"{output_dir}/jacobians_mlp_product.png",
+            output_path=f"{plot_output_dir}/jacobians_mlp_product.png",
             n_steps=N_STEPS,
             shared_id=SHARED_ID,
             pairs_ids=PAIRS_IDS,
@@ -259,11 +262,14 @@ def main():
         output_dir = f"./plots/{MODEL_NAME}"
         os.makedirs(output_dir, exist_ok=True)
 
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        plot_output_dir = f"{output_dir}/{pairs_subdir}"
+        os.makedirs(plot_output_dir, exist_ok=True)
         generate_interpolation_results_plot(
             data_dict=layerwise_norms_data,
             suptitle="Jacobian Norms: MLP (∂mlp_out / ∂resid_pre)",
             ylabel="Frobenius Norm",
-            output_path=f"{output_dir}/jacobians_mlp_norms.png",
+            output_path=f"{plot_output_dir}/jacobians_mlp_norms.png",
             n_steps=N_STEPS,
             shared_id=SHARED_ID,
             pairs_ids=PAIRS_IDS,
@@ -274,7 +280,7 @@ def main():
             data_dict=product_norms_data,
             suptitle="Jacobian Products: MLP (Full Chain)",
             ylabel="Frobenius Norm",
-            output_path=f"{output_dir}/jacobians_mlp_product.png",
+            output_path=f"{plot_output_dir}/jacobians_mlp_product.png",
             n_steps=N_STEPS,
             shared_id=SHARED_ID,
             pairs_ids=PAIRS_IDS

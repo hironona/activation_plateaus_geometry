@@ -12,7 +12,7 @@ import os
 import sys
 from typing import Dict, List
 sys.path.append('./vis_plots')
-from utils import load_config, load_activations, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data
+from utils import load_config, load_activations, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data, format_pair_ids_for_subdirectory
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -119,7 +119,10 @@ def main():
 
         mean_data, std_data = aggregate_metric_data(all_seeds_data)
 
-        output_path = f"./plots/{MODEL_NAME}/step_sizes_resid_post_layer{layer_to_interpolate}_interpolation.png"
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        output_dir = f"./plots/{MODEL_NAME}/{pairs_subdir}"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = f"{output_dir}/step_sizes_resid_post_layer{layer_to_interpolate}_interpolation.png"
         generate_interpolation_results_plot(
             data_dict=mean_data,
             suptitle=f"Resid Post Step Sizes (Interpolated at Layer {layer_to_interpolate})",
@@ -139,7 +142,10 @@ def main():
         plot_data = compute_step_sizes_for_model(MODEL_NAME, args.model_type, SHARED_ID, PAIRS_IDS, layer_to_interpolate, N_STEPS)
 
         # Generate plot
-        output_path = f"./plots/{MODEL_NAME}/step_sizes_resid_post_layer{layer_to_interpolate}_interpolation.png"
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        output_dir = f"./plots/{MODEL_NAME}/{pairs_subdir}"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = f"{output_dir}/step_sizes_resid_post_layer{layer_to_interpolate}_interpolation.png"
         generate_interpolation_results_plot(
             data_dict=plot_data,
             suptitle=f"Resid Post Step Sizes (Interpolated at Layer {layer_to_interpolate})",

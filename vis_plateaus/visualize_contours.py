@@ -30,6 +30,7 @@ from visualize_plateaus import collect_activations_resid_post, generate_uniform_
 from model import ResNetMLP, ResNetMLPSkeleton
 
 LAYER_ALIASES = {'embedding': 'embed'}
+SUB_REF_COLOR = '#CD5C5C'  # indianred (muted red)
 
 config = load_config("vis_plateaus/contour_config.yaml")
 
@@ -41,17 +42,20 @@ def compute_for_checkpoint(
     source_layer_idx: int,
     target_layer_idx,
     device: str,
+    sub_reference_points: torch.Tensor = None,
 ) -> dict:
     """
     Load checkpoint and compute:
       - L2 distances in target space from the reference point's target activation
       - Source activations (input data itself when source_layer_idx == -2)
       - Reference source activation (for marking in plots)
+      - Sub-reference source activations (optional)
 
     Returns dict with keys:
         l2_distances: (n_points,)
         source_activations: (n_points, d_source)
         ref_source_act: (d_source,)
+        sub_ref_source_acts: (n_sub, d_source) or None
         task_config: dict
         model: loaded model
     """
@@ -104,6 +108,20 @@ def compute_for_checkpoint(
         # ref_source_act = ref_acts[f'layer{source_layer_idx - 1}_resid_post'].squeeze(0).cpu()
         ref_source_act = ref_acts[f'layer{source_layer_idx}_resid_post'].squeeze(0).cpu()
 
+    # --- Sub-reference points source activations ---
+    sub_ref_source_acts = None
+    if sub_reference_points is not None:
+        if source_layer_idx == -2:
+            sub_ref_source_acts = sub_reference_points.clone().cpu()
+        else:
+            sub_acts = collect_activations_resid_post(
+                model, sub_reference_points.to(device),
+                source_layer_idx=effective_source,
+                target_layer_idx=effective_target,
+                device=device,
+            )
+            sub_ref_source_acts = sub_acts[f'layer{source_layer_idx}_resid_post'].cpu()
+
     # --- L2 distances in target space ---
     l2_dist = torch.norm(
         target_acts.float() - ref_target.float().unsqueeze(0), dim=1
@@ -113,6 +131,7 @@ def compute_for_checkpoint(
         'l2_distances': l2_dist,
         'source_activations': source_acts.cpu(),
         'ref_source_act': ref_source_act,
+        'sub_ref_source_acts': sub_ref_source_acts,
         'task_config': task_config,
         'model': model,
     }
@@ -127,6 +146,82 @@ def _compute_levels(vals: np.ndarray, n_levels: int, spacing: str) -> np.ndarray
     return np.linspace(z_min, z_max, n_levels)
 
 
+def _draw_reference_annotations(ax, ref_source_act, sub_ref_source_acts,
+                                reference_point, sub_reference_points,
+                                pca=None, is_3d=False):
+    """
+    Draw reference marker, sub-reference markers, dashed lines, and coordinate labels.
+
+    ref_source_act / sub_ref_source_acts are in source space (may need PCA transform).
+    reference_point / sub_reference_points are original input-space coords (for labels).
+    """
+    if ref_source_act is None:
+        return
+
+    # Compute reference plot position
+    if pca is not None:
+        ref_pos = pca.transform(ref_source_act.numpy().reshape(1, -1)).squeeze()
+    else:
+        ref_pos = ref_source_act.numpy()
+
+    # Reference marker
+    if is_3d:
+        ax.scatter([ref_pos[0]], [ref_pos[1]], [ref_pos[2]],
+                   c='red', marker='x', s=150, zorder=5, linewidths=2.5)
+    else:
+        ax.scatter(ref_pos[0], ref_pos[1], c='red', marker='x', s=150,
+                   zorder=5, linewidths=2.5)
+
+    # Reference coordinate label
+    if reference_point is not None and not is_3d:
+        coord_str = f"[{reference_point[0]:.2f}, {reference_point[1]:.2f}]"
+        ax.annotate(coord_str, (ref_pos[0], ref_pos[1]),
+                    textcoords='offset points', xytext=(8, 8),
+                    fontsize=7, color='red', fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.7,
+                              edgecolor='none'),
+                    zorder=6)
+
+    # Sub-reference points
+    if sub_ref_source_acts is None or sub_reference_points is None:
+        return
+
+    # Compute sub-reference plot positions
+    if pca is not None:
+        sub_positions = pca.transform(sub_ref_source_acts.numpy())
+    else:
+        sub_positions = sub_ref_source_acts.numpy()
+
+    for i in range(len(sub_reference_points)):
+        sp = sub_positions[i]
+        sub_input = sub_reference_points[i]
+
+        # Dashed line from reference to sub-reference
+        if is_3d:
+            ax.plot([ref_pos[0], sp[0]], [ref_pos[1], sp[1]], [ref_pos[2], sp[2]],
+                    color=SUB_REF_COLOR, linestyle='--', linewidth=1.2, alpha=0.8,
+                    zorder=4)
+            ax.scatter([sp[0]], [sp[1]], [sp[2]],
+                       c=SUB_REF_COLOR, marker='o', s=100, zorder=5,
+                       edgecolors='darkred', linewidths=1)
+        else:
+            ax.plot([ref_pos[0], sp[0]], [ref_pos[1], sp[1]],
+                    color=SUB_REF_COLOR, linestyle='--', linewidth=1.2, alpha=0.8,
+                    zorder=4)
+            ax.scatter(sp[0], sp[1],
+                       c=SUB_REF_COLOR, marker='o', s=100, zorder=5,
+                       edgecolors='darkred', linewidths=1)
+
+            # Coordinate label
+            coord_str = f"[{sub_input[0]:.2f}, {sub_input[1]:.2f}]"
+            ax.annotate(coord_str, (sp[0], sp[1]),
+                        textcoords='offset points', xytext=(8, -12),
+                        fontsize=7, color=SUB_REF_COLOR, fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.7,
+                                  edgecolor='none'),
+                        zorder=6)
+
+
 def visualize_open_ball_preimage(
     source_activations: torch.Tensor,
     l2_distances: torch.Tensor,
@@ -138,6 +233,9 @@ def visualize_open_ball_preimage(
     level_spacing: str = "even",
     n_pca_components: int = 3,
     ref_source_act: torch.Tensor = None,
+    reference_point: torch.Tensor = None,
+    sub_ref_source_acts: torch.Tensor = None,
+    sub_reference_points: torch.Tensor = None,
     source_layer_idx: int = None,
 ):
     """
@@ -163,6 +261,9 @@ def visualize_open_ball_preimage(
     use_tri = (d_source == 2 and not is_input_space)
     use_pca = (d_source > 2)
 
+    pca_obj = None
+    is_3d_plot = False
+
     # =========================================================
     # PATH 1: Regular contourf on 2D input grid
     # =========================================================
@@ -185,12 +286,6 @@ def visualize_open_ball_preimage(
 
         plt.colorbar(cf, ax=ax, label='L2 distance in target space',
                      shrink=1.0, pad=0.02)
-
-        if ref_source_act is not None:
-            ref = ref_source_act.numpy()
-            ax.scatter(ref[0], ref[1], c='red', marker='x', s=150,
-                       zorder=4, linewidths=2.5, label='Reference')
-            ax.legend(fontsize=8, framealpha=0.8)
 
         ax.set_xlabel('Input Dim 1')
         ax.set_ylabel('Input Dim 2')
@@ -215,12 +310,6 @@ def visualize_open_ball_preimage(
         plt.colorbar(cf, ax=ax, label='L2 distance in target space',
                      shrink=1.0, pad=0.02)
 
-        if ref_source_act is not None:
-            ref = ref_source_act.numpy()
-            ax.scatter(ref[0], ref[1], c='red', marker='x', s=150,
-                       zorder=4, linewidths=2.5, label='Reference')
-            ax.legend(fontsize=8, framealpha=0.8)
-
         ax.set_xlabel('Dim 1')
         ax.set_ylabel('Dim 2')
 
@@ -231,12 +320,12 @@ def visualize_open_ball_preimage(
     # =========================================================
     elif use_pca:
         n_plot_dims = min(n_pca_components, d_source)
-        use_3d = n_plot_dims >= 3
+        is_3d_plot = n_plot_dims >= 3
 
-        pca = PCA(n_components=n_plot_dims)
-        src_np = pca.fit_transform(source_activations.numpy())
+        pca_obj = PCA(n_components=n_plot_dims)
+        src_np = pca_obj.fit_transform(source_activations.numpy())
 
-        if not use_3d:
+        if not is_3d_plot:
             # 2D PCA — use triangulated contourf, identical to Path 2
             fig, ax = plt.subplots(figsize=(9, 8), dpi=300)
 
@@ -250,12 +339,6 @@ def visualize_open_ball_preimage(
             plt.colorbar(cf, ax=ax, label='L2 distance in target space',
                          shrink=1.0, pad=0.02)
 
-            if ref_source_act is not None:
-                ref_pca = pca.transform(ref_source_act.numpy().reshape(1, -1)).squeeze()
-                ax.scatter(ref_pca[0], ref_pca[1], c='red', marker='x', s=150,
-                           zorder=4, linewidths=2.5, label='Reference')
-                ax.legend(fontsize=8, framealpha=0.8)
-
         else:
             # 3D PCA — scatter only (tricontour is 2D only)
             fig = plt.figure(figsize=(9, 8), dpi=300)
@@ -268,17 +351,19 @@ def visualize_open_ball_preimage(
             plt.colorbar(scatter, ax=ax, label='L2 distance in target space',
                          shrink=0.7, pad=0.1)
 
-            if ref_source_act is not None:
-                ref_pca = pca.transform(ref_source_act.numpy().reshape(1, -1)).squeeze()
-                ax.scatter([ref_pca[0]], [ref_pca[1]], [ref_pca[2]],
-                           c='red', marker='x', s=150, zorder=3, linewidths=2.5)
-
             ax.set_zlabel('PC 3')
 
         ax.set_xlabel('PC 1')
         ax.set_ylabel('PC 2')
-        if use_3d:
+        if is_3d_plot:
             ax.set_zlabel('PC 3')
+
+    # --- Reference & sub-reference annotations (all paths) ---
+    _draw_reference_annotations(
+        ax, ref_source_act, sub_ref_source_acts,
+        reference_point, sub_reference_points,
+        pca=pca_obj, is_3d=is_3d_plot,
+    )
 
     # --- Common ---
     ax.set_title(title, fontsize=11)
@@ -319,6 +404,12 @@ def main():
     N_LEVELS      = config.get('n_contour_levels', 15)
     LEVEL_SPACING = config.get('contour_level_spacing', 'even')
 
+    # Sub-reference points (None if not set or null)
+    raw_sub_refs = config.get('sub_reference_points', None)
+    SUB_REFERENCE_POINTS = None
+    if raw_sub_refs is not None:
+        SUB_REFERENCE_POINTS = torch.tensor(raw_sub_refs, dtype=torch.float32)
+
     def resolve_layer_idx(raw_value):
         try:
             return int(raw_value)          # handles -2, -1, 0, 1, ... directly
@@ -347,7 +438,8 @@ def main():
         for idx, ckpt in enumerate(model_paths):
             print(f"  Seed {idx + 1}/{len(model_paths)}: {ckpt}")
             result = compute_for_checkpoint(
-                ckpt, data, REFERENCE_POINT, source_layer_idx, target_layer_idx, device
+                ckpt, data, REFERENCE_POINT, source_layer_idx, target_layer_idx, device,
+                sub_reference_points=SUB_REFERENCE_POINTS,
             )
             all_l2.append(result['l2_distances'])
             if first_result is None:
@@ -357,6 +449,7 @@ def main():
         n_seeds = len(model_paths)
         source_activations = first_result['source_activations']
         ref_source_act     = first_result['ref_source_act']
+        sub_ref_source_acts = first_result['sub_ref_source_acts']
 
         title = (
             f"Pre-image of Open Balls (mean over {n_seeds} seeds)\n"
@@ -369,11 +462,13 @@ def main():
         ckpt = model_paths[0]
         print(f"Checkpoint: {ckpt}")
         result = compute_for_checkpoint(
-            ckpt, data, REFERENCE_POINT, source_layer_idx, target_layer_idx, device
+            ckpt, data, REFERENCE_POINT, source_layer_idx, target_layer_idx, device,
+            sub_reference_points=SUB_REFERENCE_POINTS,
         )
-        l2_distances       = result['l2_distances']
-        source_activations = result['source_activations']
-        ref_source_act     = result['ref_source_act']
+        l2_distances        = result['l2_distances']
+        source_activations  = result['source_activations']
+        ref_source_act      = result['ref_source_act']
+        sub_ref_source_acts = result['sub_ref_source_acts']
 
         title = (
             f"Pre-image of Open Balls\n"
@@ -398,6 +493,9 @@ def main():
         level_spacing=LEVEL_SPACING,
         n_pca_components=N_PCA,
         ref_source_act=ref_source_act,
+        reference_point=REFERENCE_POINT,
+        sub_ref_source_acts=sub_ref_source_acts,
+        sub_reference_points=SUB_REFERENCE_POINTS,
         source_layer_idx=source_layer_idx,
     )
 

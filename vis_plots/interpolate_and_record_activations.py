@@ -830,7 +830,7 @@ def run_for_single_model(args, config, model_name):
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if args.model_type == 'toy_resnet':
-        model, _ = load_model_from_checkpoint(model_name)
+        model, _, _ = load_model_from_checkpoint(model_name)
         n_layers = len(model.blocks)
     else:
         model = load_model(model_name)

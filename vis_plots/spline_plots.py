@@ -14,7 +14,7 @@ import torch
 from tqdm import tqdm
 
 sys.path.append('./vis_plots')
-from utils import load_activations, load_config, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data
+from utils import load_activations, load_config, generate_interpolation_results_plot, get_model_name, get_model_names, aggregate_metric_data, format_pair_ids_for_subdirectory
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -122,7 +122,10 @@ def main():
 
         mean_data, std_data = aggregate_metric_data(all_seeds_data)
 
-        output_path = f"./plots/{MODEL_NAME}/spline_hamming_distances.png"
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        output_dir = f"./plots/{MODEL_NAME}/{pairs_subdir}"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = f"{output_dir}/spline_hamming_distances.png"
         generate_interpolation_results_plot(
             data_dict=mean_data,
             suptitle="Normalized Hamming Distances of Spline Codes",
@@ -142,7 +145,10 @@ def main():
 
         plot_data = compute_spline_plot_data(MODEL_NAME, args.model_type, SHARED_ID, PAIRS_IDS, N_STEPS)
 
-        output_path = f"./plots/{MODEL_NAME}/spline_hamming_distances.png"
+        pairs_subdir = format_pair_ids_for_subdirectory(PAIRS_IDS)
+        output_dir = f"./plots/{MODEL_NAME}/{pairs_subdir}"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = f"{output_dir}/spline_hamming_distances.png"
         generate_interpolation_results_plot(
             data_dict=plot_data,
             suptitle="Normalized Hamming Distances of Spline Codes",

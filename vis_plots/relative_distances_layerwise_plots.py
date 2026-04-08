@@ -14,7 +14,7 @@ import os
 from typing import Dict, List
 import sys
 sys.path.append('./vis_plots')
-from utils import load_activations, load_config, get_n_layers, compute_relative_distances, generate_interpolation_results_plot, construct_filepath, get_model_name, get_model_names, aggregate_metric_data
+from utils import load_activations, load_config, get_n_layers, compute_relative_distances, generate_interpolation_results_plot, construct_filepath, get_model_name, get_model_names, aggregate_metric_data, format_pair_ids_for_subdirectory
 
 config = load_config()
 N_STEPS = config['n_steps']
@@ -37,11 +37,14 @@ def variant1_compute(shared_id, pairs_ids, model_name, layer_to_interpolate):
 
 def variant1_plot(plot_data, shared_id, pairs_ids, output_dir, layer_to_interpolate, std_dict=None):
     """Variant 1: Plot - Interpolate in layer 0, record in all subsequent layers."""
+    pairs_subdir = format_pair_ids_for_subdirectory(pairs_ids)
+    full_output_dir = f"{output_dir}/{pairs_subdir}"
+    os.makedirs(full_output_dir, exist_ok=True)
     generate_interpolation_results_plot(
         data_dict=plot_data,
         suptitle=f"Relative Distances (Interpolate in Layer {layer_to_interpolate})",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"{output_dir}/relative_distances_layerwise_layer{layer_to_interpolate}_interpolation.png",
+        output_path=f"{full_output_dir}/relative_distances_layerwise_layer{layer_to_interpolate}_interpolation.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
@@ -75,11 +78,14 @@ def variant2_compute(n_layers, shared_id, pairs_ids, model_name):
 
 def variant2_plot(plot_data, shared_id, pairs_ids, output_dir, std_dict=None):
     """Variant 2: Plot - Interpolate in each layer, record in last layer only."""
+    pairs_subdir = format_pair_ids_for_subdirectory(pairs_ids)
+    full_output_dir = f"{output_dir}/{pairs_subdir}"
+    os.makedirs(full_output_dir, exist_ok=True)
     generate_interpolation_results_plot(
         data_dict=plot_data,
         suptitle="Relative Distances (Record in Last Layer)",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"{output_dir}/relative_distances_layerwise_last_layer_recording.png",
+        output_path=f"{full_output_dir}/relative_distances_layerwise_last_layer_recording.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
@@ -113,11 +119,14 @@ def variant3_compute(n_layers, shared_id, pairs_ids, model_name, N):
 
 def variant3_plot(plot_data, shared_id, pairs_ids, output_dir, N, std_dict=None):
     """Variant 3: Plot - Interpolate in layer i, record in layer i+N."""
+    pairs_subdir = format_pair_ids_for_subdirectory(pairs_ids)
+    full_output_dir = f"{output_dir}/{pairs_subdir}"
+    os.makedirs(full_output_dir, exist_ok=True)
     generate_interpolation_results_plot(
         data_dict=plot_data,
         suptitle=f"Relative Distances (N={N})",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"{output_dir}/relative_distances_layerwise_N{N}.png",
+        output_path=f"{full_output_dir}/relative_distances_layerwise_N{N}.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
@@ -144,11 +153,14 @@ def single_layer_compute(shared_id, pairs_ids, model_name, layer_to_interpolate,
 
 def single_layer_plot(plot_data, shared_id, pairs_ids, output_dir, layer_to_interpolate, target_layer, std_dict=None):
     """Plot relative distances for a single target layer."""
+    pairs_subdir = format_pair_ids_for_subdirectory(pairs_ids)
+    full_output_dir = f"{output_dir}/{pairs_subdir}"
+    os.makedirs(full_output_dir, exist_ok=True)
     generate_interpolation_results_plot(
         data_dict=plot_data,
         suptitle=f"Relative Distances — Layer {target_layer} (Interpolate in Layer {layer_to_interpolate})",
         ylabel="Relative Distance to Token A (0) vs Token B (1)",
-        output_path=f"{output_dir}/relative_distances_layer{target_layer}_interpolate{layer_to_interpolate}.png",
+        output_path=f"{full_output_dir}/relative_distances_layer{target_layer}_interpolate{layer_to_interpolate}.png",
         n_steps=N_STEPS,
         shared_id=shared_id,
         pairs_ids=pairs_ids,
