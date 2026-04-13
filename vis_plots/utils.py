@@ -241,6 +241,10 @@ def lerp_rescale(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
 
     return lerp_result_normalized * target_norm
 
+def linear_interpolation(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
+    """Simple linear interpolation without norm rescaling."""
+    return (1 - t) * v0 + t * v1
+
 def format_pair_ids_for_subdirectory(pairs_ids: List[List[str]]) -> str:
     """Format multiple pairs into a subdirectory path.
 

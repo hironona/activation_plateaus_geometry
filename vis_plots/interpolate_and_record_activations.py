@@ -25,7 +25,7 @@ from PIL import Image
 import sys
 sys.path.append('./vis_plots')
 sys.path.append('./train')
-from utils import load_model, load_config, load_image, slerp_rescale, lerp_rescale, construct_filepath, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names
+from utils import load_model, load_config, load_image, slerp_rescale, lerp_rescale, linear_interpolation, construct_filepath, get_n_layers_from_model, load_model_from_checkpoint, get_model_name, get_model_names
 
 from model import ResNetMLP, ResNetMLPSkeleton
 
@@ -519,14 +519,14 @@ def interpolate_toy_resnet_layer(
     resid_a = resid_post_a[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]    
     resid_b = resid_post_b[f'layer{interpolation_layer}_resid_post']  # [1, hidden_dim]
     
-    # Compute SLERP interpolations
+    # Compute linear interpolations
     resid_a_device = resid_a.to(device)
     resid_b_device = resid_b.to(device)
     alphas = torch.linspace(0, 1, n_steps, device=device)
     
-    # SLERP interpolation (falls back to plain lerp for antiparallel vectors)
+    # Linear interpolation
     interpolated_activations = torch.stack([
-        slerp_rescale(resid_a_device, resid_b_device, alpha.item()).squeeze(0)
+        linear_interpolation(resid_a_device, resid_b_device, alpha.item()).squeeze(0)
         for alpha in alphas
     ])  # [n_steps, hidden_dim]
     

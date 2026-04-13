@@ -16,7 +16,6 @@ def load_metrics(path):
     with open(path, 'r') as f:
         return json.load(f)
 
-
 def plot_single_run(metrics, save_path):
     """Plot training curves for a single run."""
     epochs = np.arange(1, len(metrics['train_loss']) + 1)
@@ -49,7 +48,7 @@ def plot_single_run(metrics, save_path):
         ax.set_ylim(0, 1.05)
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
+    plt.savefig(save_path, dpi=300)
     plt.close()
     print(f"Saved plot: {save_path}")
 
@@ -68,17 +67,21 @@ def plot_multi_seed(all_metrics, save_path):
     if not has_acc:
         axes = [axes]
 
+    n_seeds = len(all_metrics)
+    ci_factor = 1.96 / np.sqrt(n_seeds)
+
     # Loss plot
     ax = axes[0]
     mean_tl, std_tl = train_losses.mean(axis=0), train_losses.std(axis=0)
     mean_vl, std_vl = val_losses.mean(axis=0), val_losses.std(axis=0)
+    ci_tl, ci_vl = std_tl * ci_factor, std_vl * ci_factor
     ax.plot(epochs, mean_tl, label='Train Loss')
-    ax.fill_between(epochs, mean_tl - std_tl, mean_tl + std_tl, alpha=0.2)
+    ax.fill_between(epochs, mean_tl - ci_tl, mean_tl + ci_tl, alpha=0.2)
     ax.plot(epochs, mean_vl, label='Val Loss')
-    ax.fill_between(epochs, mean_vl - std_vl, mean_vl + std_vl, alpha=0.2)
+    ax.fill_between(epochs, mean_vl - ci_vl, mean_vl + ci_vl, alpha=0.2)
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
-    ax.set_title(f'Loss (n={len(all_metrics)} seeds)')
+    ax.set_title(f'Loss (n={n_seeds} seeds, 95% CI)')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -88,21 +91,22 @@ def plot_multi_seed(all_metrics, save_path):
         val_accs = np.array([m['val_acc'] for m in all_metrics])
         mean_ta, std_ta = train_accs.mean(axis=0), train_accs.std(axis=0)
         mean_va, std_va = val_accs.mean(axis=0), val_accs.std(axis=0)
+        ci_ta, ci_va = std_ta * ci_factor, std_va * ci_factor
 
         ax = axes[1]
         ax.plot(epochs, mean_ta, label='Train Acc')
-        ax.fill_between(epochs, mean_ta - std_ta, mean_ta + std_ta, alpha=0.2)
+        ax.fill_between(epochs, mean_ta - ci_ta, mean_ta + ci_ta, alpha=0.2)
         ax.plot(epochs, mean_va, label='Val Acc')
-        ax.fill_between(epochs, mean_va - std_va, mean_va + std_va, alpha=0.2)
+        ax.fill_between(epochs, mean_va - ci_va, mean_va + ci_va, alpha=0.2)
         ax.set_xlabel('Epoch')
         ax.set_ylabel('Accuracy')
-        ax.set_title(f'Accuracy (n={len(all_metrics)} seeds)')
+        ax.set_title(f'Accuracy (n={n_seeds} seeds, 95% CI)')
         ax.legend()
         ax.grid(True, alpha=0.3)
         ax.set_ylim(0, 1.05)
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
+    plt.savefig(save_path, dpi=300)
     plt.close()
     print(f"Saved plot: {save_path}")
 
@@ -118,7 +122,7 @@ def main():
     if os.path.isfile(metrics_file):
         # Single run
         metrics = load_metrics(metrics_file)
-        save_path = os.path.join(args.checkpoint_dir, "training_curves.png")
+        save_path = os.path.join("plots", os.path.relpath(args.checkpoint_dir), "training_curves.png")
         plot_single_run(metrics, save_path)
     else:
         # Multi-seed: look for timestamp subdirs containing metrics.json
@@ -133,10 +137,10 @@ def main():
             return
 
         if len(all_metrics) == 1:
-            save_path = os.path.join(args.checkpoint_dir, "training_curves.png")
+            save_path = os.path.join("plots", os.path.relpath(args.checkpoint_dir), "training_curves.png")
             plot_single_run(all_metrics[0], save_path)
         else:
-            save_path = os.path.join(args.checkpoint_dir, "training_curves.png")
+            save_path = os.path.join("plots", os.path.relpath(args.checkpoint_dir), "training_curves.png")
             plot_multi_seed(all_metrics, save_path)
 
 

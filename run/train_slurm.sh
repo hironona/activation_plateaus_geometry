@@ -22,7 +22,7 @@ mkdir -p slurm_output
 #
 # Uncomment the block below if you want to set up conda:
 #
-CONDA_ENV_NAME="interp"
+CONDA_ENV_NAME="ENV"
 # if ! conda env list | grep -q "^${CONDA_ENV_NAME}"; then
 #     echo "Creating conda environment from uv.lock..."
 #     # Extract Python version and dependencies from uv.lock
