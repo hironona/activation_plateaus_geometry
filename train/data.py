@@ -89,8 +89,8 @@ class ToyDataset(Dataset):
 def visualize_dataset():
     print("Generating Spiral Dataset...")
     num_classes = 2
-    noise_std=0.00
-    dataset = ToyDataset(task_name="class_spiral", num_samples=5000, num_classes=num_classes, noise_std=noise_std, seed=42)
+    noise_std=0.05
+    dataset = ToyDataset(task_name="class_spiral", num_samples=10000, num_classes=num_classes, noise_std=noise_std, seed=42)
     X = dataset.data.numpy()
     y = dataset.targets.numpy()
 
@@ -102,7 +102,7 @@ def visualize_dataset():
     
     # Aesthetics
     # plt.colorbar(scatter, label="Class Label")
-    plt.title(f"Twisted Spiral Task ({num_classes} Classes)\nManifold for ResNet Activation Analysis")
+    plt.title(f"Classification Task ({num_classes} Classes)")
     plt.xlabel("$x_1$")
     plt.ylabel("$x_2$")
     plt.xlim(-1.1, 1.1)

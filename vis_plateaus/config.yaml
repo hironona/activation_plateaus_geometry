@@ -11,4 +11,4 @@ n_pca_components: 3  # Number of PCA components when source dim > this value. Op
 log_scale: True  # Whether to use log scale for the metric values when coloring the points
 
 model_names:
-  toy_resnet: "checkpoints/class_spiral/ResNetMLP_epoch500/noise-0.00-multi_seed_5_runs"
+  toy_resnet: "checkpoints/class_spiral/ResNetMLP_epoch500/noise-0.05-multi_seed_5_runs"

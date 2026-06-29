@@ -10,9 +10,6 @@ import numpy as np
 import os
 import argparse
 import matplotlib.pyplot as plt
-import matplotlib.lines as mlines
-from mpl_toolkits.mplot3d import Axes3D
-from sklearn.decomposition import PCA
 from tqdm import tqdm
 import math
 
@@ -21,27 +18,12 @@ sys.path.append('./train')
 from utils import load_config, load_model, load_model_from_checkpoint, construct_filepath, get_n_layers_from_model, get_model_names, get_model_name, LAYER_ARGUMENT_IDX_MAPPING
 from compute_metrics import l2_norm_metric, jacobian_determinant_metric, jacobian_determinant_layerwise_prod_metric, jacobian_norm_metric, jacobian_norm_layerwise_prod_metric
 from model import ResNetMLP, ResNetMLPSkeleton
-from data import ToyDataset
 
 config = load_config("vis_plateaus/config.yaml")
 
 METRIC_OPTIONS = ['l2_norm', 'jacobian_determinant_full', 'jacobian_determinant_layerwise_prod', 'jacobian_norm_full', 'jacobian_norm_layerwise_prod']
 
 LAYER_ALIASES = {'embedding': 'embed'}
-
-# Muted/pastel colors for background class overlay (up to 10 classes)
-CLASS_COLORS = [
-    '#F5E6A0',  # pastel yellow
-    '#A8D5BA',  # pastel green
-    '#F5C6A0',  # pastel orange
-    '#B5C8E8',  # pastel blue
-    '#E8B5D3',  # pastel pink
-    '#D4D4AA',  # pastel olive
-    '#C5A8D5',  # pastel purple
-    '#A8D5D5',  # pastel teal
-    '#D5A8A8',  # pastel red
-    '#A8C5A8',  # pastel sage
-]
 
 
 def collect_activations_resid_post(model: Union[ResNetMLP, ResNetMLPSkeleton], data, source_layer_idx: int, target_layer_idx: int, device) -> Dict[str, torch.Tensor]:
@@ -109,172 +91,50 @@ def generate_uniform_data(n_points: int, radius: float) -> torch.Tensor:
     return new_points
 
 def visualize_plateau(
-    source_activations: torch.Tensor,
+    data: torch.Tensor,
     metric_values: torch.Tensor,
     metric_name: str,
     title: str,
     output_path: str,
-    n_pca_components: int = 3,
-    reference_point_source_act: torch.Tensor = None,
-    model: Union[ResNetMLP, ResNetMLPSkeleton] = None,
-    source_layer_idx: int = None,
-    device: str = 'cpu',
-    task_config: dict = None,
+    radius: float,
+    reference_point: torch.Tensor = None,
 ):
     """
-    Create a scatter plot of data points in source-layer space, colored by metric value,
-    with a faint background overlay of the training dataset transformed to the same space.
-    When the source dimension exceeds n_pca_components, PCA is used to reduce dimensionality.
+    Render the metric over the 2D input grid as a heatmap.
 
     Args:
-        source_activations: (n_points, d_source) — activations at source layer for sampled points.
-        metric_values: (n_points,) — computed metric value per point.
-        metric_name: Label for the colorbar.
+        data: (n_points, 2) — input grid points produced by `generate_uniform_data`.
+        metric_values: (n_points,) — metric value per point.
+        metric_name: Colorbar label.
         title: Plot title.
         output_path: Where to save the plot.
-        n_pca_components: Number of PCA components to reduce to (2 or 3).
-        reference_point_source_act: (d_source,) — reference point in source space (for marking).
-        model: Model used to transform background data to source space.
-        source_layer_idx: Source layer index for transforming background data.
-        device: Device string.
-        task_config: Task config dict from checkpoint (keys: name, num_classes, noise_std, distribution, etc.).
+        radius: Half-extent of the input grid.
+        reference_point: (2,) — reference point in input space (for marking).
     """
-    d_source = source_activations.shape[1]
-    use_pca = d_source > n_pca_components
-    n_plot_dims = n_pca_components if use_pca else d_source
-    use_3d = n_plot_dims >= 3
+    grid_size = int(math.sqrt(data.shape[0]))
+    assert grid_size * grid_size == data.shape[0], "data must be a square grid"
 
+    # `generate_uniform_data` builds points with x1 varying along the outer loop and x2 along
+    # the inner loop, so reshape gives grid[i, j] for (x1[i], x2[j]). Transpose so axis 0 is x2
+    # (vertical) and axis 1 is x1 (horizontal) — matches imshow's (row=y, col=x) convention.
+    grid = metric_values.numpy().reshape(grid_size, grid_size).T
 
-    # --- Create figure ---
-    fig = plt.figure(figsize=(9, 8), dpi=300)
-    if use_3d:
-        ax = fig.add_subplot(111, projection='3d')
-    else:
-        ax = fig.add_subplot(111)
+    fig, ax = plt.subplots(figsize=(9, 8), dpi=300)
+    im = ax.imshow(
+        grid, origin='lower', extent=(-radius, radius, -radius, radius),
+        cmap='coolwarm', aspect='equal', interpolation='nearest',
+    )
+    plt.colorbar(im, ax=ax, label=metric_name, pad=0.02)
 
-    # --- PCA fitting (on source activations) using sklearn ---
-    pca = None
-    if use_pca:
-        print(f"Source dimension {d_source} exceeds {n_pca_components}, applying PCA for visualization...")
-        pca = PCA(n_components=n_plot_dims)
-        src_np = pca.fit_transform(source_activations.numpy())
-    else:
-        src_np = source_activations.numpy()
+    if reference_point is not None and metric_name.startswith('l2_norm'):
+        ref = reference_point.numpy().squeeze()
+        ax.scatter(ref[0], ref[1], c='black', marker='x', s=100, zorder=3, linewidths=2)
 
-
-    # --- Resolve task config for background overlay ---
-    num_classes = 2
-    noise_std = 0.0
-    distribution = 'uniform'
-    task_name = 'class_spiral'
-    if task_config is not None:
-        num_classes = task_config.get('num_classes', 2)
-        noise_std = task_config.get('noise_std', 0.0)
-        # distribution = task_config.get('distribution', 'uniform')
-        task_name = task_config.get('name', 'class_spiral')
-
-    # --- Background: dataset overlay in source layer space ---
-    bg_legend_handles = []
-    if model is not None and source_layer_idx is not None:
-        bg_dataset = ToyDataset(
-            task_name=task_name, num_samples=10,
-            num_classes=num_classes, noise_std=noise_std,
-            distribution=distribution, seed=42
-        )
-        bg_X = bg_dataset.data   # (2500, 2)
-        bg_y = bg_dataset.targets
-
-        if source_layer_idx <= -2:
-            bg_source_np = bg_X.numpy()
-        else:
-            bg_acts = collect_activations_resid_post(
-                model, bg_X.to(device),
-                source_layer_idx=-2, target_layer_idx=source_layer_idx, device=device
-            )
-            bg_source_np = bg_acts[f'layer{source_layer_idx-1}_resid_post'].numpy()
-
-        if use_pca:
-            bg_source_np = pca.transform(bg_source_np)
-
-        # Get class labels
-        if bg_y.dim() > 1 and bg_y.shape[-1] > 1:
-            # One-hot encoded (num_classes > 2)
-            bg_labels = bg_y.argmax(dim=1).numpy()
-        else:
-            # Scalar targets: shape (n,) or (n, 1) for binary classification
-            bg_labels = bg_y.squeeze().numpy()
-            # Binarize: threshold at 0.5 for sigmoid-style outputs
-            bg_labels = (bg_labels >= 0.5).astype(int)
-
-        unique_classes = sorted(set(bg_labels.tolist()))
-
-        # Plot each class with a distinct pastel color
-        for cls_idx in unique_classes:
-            mask = bg_labels == cls_idx
-            color = CLASS_COLORS[cls_idx % len(CLASS_COLORS)]
-            if use_3d:
-                ax.scatter(bg_source_np[mask, 0], bg_source_np[mask, 1], bg_source_np[mask, 2],
-                           c=color, s=8, alpha=0.5, zorder=1, marker='o')
-            else:
-                ax.scatter(bg_source_np[mask, 0], bg_source_np[mask, 1],
-                           c=color, s=8, alpha=0.5, zorder=1, marker='o')
-
-            bg_legend_handles.append(
-                mlines.Line2D([], [], color=color, marker='o', linestyle='None',
-                              markersize=5, label=f'Class {cls_idx}')
-            )
-
-    # --- Main scatter: source activations colored by metric ---
-    vals = metric_values.numpy()
-
-    if use_3d:
-        scatter = ax.scatter(src_np[:, 0], src_np[:, 1], src_np[:, 2], c=vals, cmap='coolwarm',
-                             s=10, alpha=0.7, zorder=2, edgecolors='none')
-    else:
-        scatter = ax.scatter(src_np[:, 0], src_np[:, 1], c=vals, cmap='coolwarm',
-                             s=10, alpha=0.7, zorder=2, edgecolors='none')
-    plt.colorbar(scatter, ax=ax, label=metric_name, shrink=0.7 if use_3d else 1.0, pad=0.1)
-
-    # --- Mark reference point ---
-    if reference_point_source_act is not None and metric_name == 'l2_norm':
-        ref = reference_point_source_act.numpy()
-        if ref.ndim == 1:
-            ref = ref.reshape(1, -1)
-        if use_pca:
-            ref = pca.transform(ref)
-        ref = ref.squeeze()
-
-        if use_3d:
-            ax.scatter([ref[0]], [ref[1]], [ref[2]], c='black', marker='x', s=100, zorder=3, linewidths=2)
-        else:
-            ax.scatter(ref[0], ref[1], c='black', marker='x', s=100, zorder=3, linewidths=2)
-
-    # --- Labels and Limits ---
     ax.set_title(title, fontsize=12)
-    if use_pca:
-        ax.set_xlabel('PC 1')
-        ax.set_ylabel('PC 2')
-        if use_3d:
-            ax.set_zlabel('PC 3')
-    else:
-        ax.set_xlabel('Dim 1')
-        ax.set_ylabel('Dim 2')
-        if use_3d:
-            ax.set_zlabel('Dim 3')
-    
-    if d_source == 2: # If the source space is 2D, assume it is the input space.
-        ax.set_ylim(-1, 1)
-        ax.set_xlim(-1, 1)
-        if use_3d:
-            ax.set_zlim(-1, 1)
-
-    # --- Class legend (discrete, inside plot) ---
-    if bg_legend_handles:
-        ax.legend(handles=bg_legend_handles, title='Training data',
-                  loc='lower right',
-                  fontsize=8, title_fontsize=9, framealpha=0.8)
-
-    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.set_xlabel('x1')
+    ax.set_ylabel('x2')
+    ax.set_xlim(-radius, radius)
+    ax.set_ylim(-radius, radius)
     plt.tight_layout()
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -367,6 +227,7 @@ def main():
     parser.add_argument('--data_type', type=str, choices=['text', 'image', 'class_spiral'], required=True, help='Type of data to use')
     parser.add_argument('--model_path', type=str, help='Path to model checkpoint or directory')
     parser.add_argument('--multi_seed', action='store_true', help='Average metric across all seed checkpoints (toy_resnet only)')
+    parser.add_argument('--target_layer_idx', type=str, default=None, help="Override target_layer_idx from config (e.g. '0', '9', 'logits')")
 
     args = parser.parse_args()
 
@@ -383,7 +244,7 @@ def main():
     REFERENCE_POINT = torch.tensor(config['reference_point'])
     METRIC = config['metric']
     SOURCE_LAYER_IDX_RAW = config['source_layer_idx']
-    TARGET_LAYER_IDX_RAW = config['target_layer_idx']
+    TARGET_LAYER_IDX_RAW = args.target_layer_idx if args.target_layer_idx is not None else config['target_layer_idx']
     N_PCA_COMPONENTS = config.get('n_pca_components', 3)
     LOG_SCALE = config.get('log_scale', False)
 
@@ -438,12 +299,7 @@ def main():
         mean_metric = stacked.mean(dim=0)          # (n_points,)
         n_seeds = len(model_paths)
 
-        # Use first seed's spatial layout for plotting
-        source_activations = first_seed_result['source_activations']
-        ref_source_act = first_seed_result['ref_source_act']
         task_config = first_seed_result['task_config']
-        model = first_seed_result['model']
-
         metric_values = mean_metric
 
         # Title
@@ -466,10 +322,7 @@ def main():
             source_layer_idx, target_layer_idx, device,
         )
 
-        source_activations = result['source_activations']
-        ref_source_act = result['ref_source_act']
         task_config = result['task_config']
-        model = result['model']
         metric_values = result['metric_values']
 
         # Title
@@ -488,17 +341,13 @@ def main():
     print(f"Loaded model on {device} (task config: {task_config})")
 
     visualize_plateau(
-        source_activations=source_activations,
+        data=data,
         metric_values=metric_values,
         metric_name=METRIC,
         title=title,
         output_path=output_path,
-        n_pca_components=N_PCA_COMPONENTS,
-        reference_point_source_act=ref_source_act,
-        model=model,
-        source_layer_idx=source_layer_idx,
-        device=device,
-        task_config=task_config,
+        radius=RADIUS,
+        reference_point=REFERENCE_POINT,
     )
 
     print("\n=== Complete ===")
